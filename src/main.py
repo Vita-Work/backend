@@ -1,11 +1,14 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import get_settings
+from src.db.engine import check_database_connection
 from src.logger import configure_logging, get_logger
 from src.middleware import RequestContextMiddleware
+from src.modules.extraction.routes import router as extraction_router
+from src.modules.users.routes import router as users_router
 
 settings = get_settings()
 
@@ -60,6 +63,23 @@ def create_app() -> FastAPI:
     async def health_check() -> dict[str, str]:
         """Return a basic health probe response."""
         return {"status": "ok"}
+
+    @app.get("/health/db")
+    async def database_health_check() -> dict[str, str]:
+        """Return a database connectivity probe response."""
+        try:
+            await check_database_connection()
+        except Exception as exc:
+            logger.error("database_health_check_failed", error=str(exc), exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database is unavailable.",
+            ) from exc
+
+        return {"status": "ok", "database": "ok"}
+
+    app.include_router(users_router)
+    app.include_router(extraction_router)
 
     return app
 
