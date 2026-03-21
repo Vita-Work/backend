@@ -164,6 +164,7 @@ def configure_logging(
         "httpcore",
         "aiobotocore",
         "botocore",
+        "python_multipart",
         "urllib3",
         "asyncio",
         "aiosqlite",

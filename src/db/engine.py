@@ -1,35 +1,14 @@
 import functools
-import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TypeVar
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-
-def _get_database_url() -> str:
-    try:
-        from src.config import get_settings
-    except ModuleNotFoundError as err:
-        database_url = os.getenv("DATABASE_URL") or os.getenv("DATABASE_DSN")
-        if database_url:
-            return database_url
-
-        raise RuntimeError(
-            "Database URL is not configured. Define DATABASE_URL (or DATABASE_DSN), "
-            "or add src.config.get_settings()."
-        ) from err
-
-    settings = get_settings()
-    database_url = getattr(settings, "connection_string", None)
-    if database_url:
-        return database_url
-
-    raise RuntimeError("Settings must define `connection_string` for database access.")
-
+from src.db.url import get_async_database_url
 
 engine = create_async_engine(
-    _get_database_url(),
+    get_async_database_url(),
     echo=False,
     pool_pre_ping=True,
     pool_size=20,
@@ -45,10 +24,7 @@ session_factory = async_sessionmaker(
 )
 
 
-F = TypeVar("F", bound=Callable[..., Awaitable])
-
-
-def with_session(func: F) -> F:
+def with_session[F: Callable[..., Awaitable]](func: F) -> F:
     """
     Open a new AsyncSession and inject it into `session` when one was not passed.
 
@@ -71,3 +47,15 @@ def with_session(func: F) -> F:
 async def get_db_context() -> AsyncGenerator[AsyncSession]:
     async with session_factory() as session:
         yield session
+
+
+async def get_db_session() -> AsyncGenerator[AsyncSession]:
+    """Yield an async database session for FastAPI dependencies."""
+    async with session_factory() as session:
+        yield session
+
+
+async def check_database_connection() -> None:
+    """Raise when the application cannot reach the configured database."""
+    async with session_factory() as session:
+        await session.execute(text("SELECT 1"))
