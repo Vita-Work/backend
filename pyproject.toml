@@ -1,7 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backend service for Vita"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "arq>=0.26.3",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.115.12",
+    "pydantic-settings>=2.8.1",
+    "sqlalchemy>=2.0.39",
+    "structlog>=24.4.0",
+    "uvicorn>=0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.5",
+    "ruff>=0.11.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
