@@ -2,6 +2,13 @@
 
 Backend template for Vita-style services.
 
+## Docs
+
+- [`docs/overview.md`](/Users/aidin/Projects/vita/backend/docs/overview.md)
+- [`docs/cv-extraction.md`](/Users/aidin/Projects/vita/backend/docs/cv-extraction.md)
+- [`docs/search-setup-architecture.md`](/Users/aidin/Projects/vita/backend/docs/search-setup-architecture.md)
+- [`docs/branch-changes.md`](/Users/aidin/Projects/vita/backend/docs/branch-changes.md)
+
 ## Environment setup
 
 ```bash
@@ -71,3 +78,14 @@ curl -X POST http://127.0.0.1:8000/extraction/cv \
 ```
 
 More details are in [`docs/cv-extraction.md`](docs/cv-extraction.md).
+
+## Onboarding flow
+
+The main user-facing flow is:
+
+1. `POST /onboarding/users/{user_id}/restart`
+2. `POST /extraction/cv/run`
+3. `GET /onboarding/users/{user_id}/active`
+4. `POST /onboarding/users/{user_id}/respond`
+
+`respond` is used for both clarification answers and final confirmation.

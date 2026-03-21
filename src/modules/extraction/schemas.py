@@ -1,6 +1,8 @@
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class StoredCvFileResponse(BaseModel):
@@ -40,3 +42,19 @@ class CvExtractionWorkflowResponse(BaseModel):
     missing_info: list[str]
     preference_hints: list[str]
     extraction_model: str | None = None
+
+
+class CvExtractionWorkflowRunResponse(BaseModel):
+    """Workflow run status and optional extraction result."""
+
+    workflow_run_id: UUID
+    file: StoredCvFileResponse
+    extraction: ExtractionInputResponse
+    status: str
+    extracted_profile: str | None = None
+    missing_info: list[str] = Field(default_factory=list)
+    preference_hints: list[str] = Field(default_factory=list)
+    extraction_model: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime | None

@@ -14,6 +14,20 @@ logger = get_logger("workflows.search_setup.extraction")
 
 async def extraction_node(state: SearchSetupState) -> dict[str, object]:
     """Prepare the extracted profile context for the first workflow step."""
+    existing_profile = (state.get("extracted_profile") or "").strip()
+    if existing_profile:
+        logger.info(
+            "search_setup_extraction_skipped",
+            user_id=state["user_id"],
+            onboarding_session_id=state["onboarding_session_id"],
+        )
+        return {
+            "status": "clarifying",
+            "extracted_profile": existing_profile,
+            "missing_info": state.get("missing_info", []),
+            "preference_hints": state.get("preference_hints", []),
+        }
+
     strategy = state["extraction_strategy"]
     log = logger.bind(
         user_id=state["user_id"],

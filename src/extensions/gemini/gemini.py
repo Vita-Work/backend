@@ -6,7 +6,7 @@ from pathlib import Path
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src.config import get_settings
 from src.logger import get_logger
@@ -29,6 +29,15 @@ class CvExtractionResult(BaseModel):
     preference_hints: list[str] = Field(default_factory=list)
 
 
+class ClarificationDecision(BaseModel):
+    """Structured clarification decision returned by Gemini."""
+
+    needs_more_context: bool
+    question: str | None = None
+    missing_info: list[str] = Field(default_factory=list)
+    preference_hints: list[str] = Field(default_factory=list)
+
+
 class GeminiCvExtractionService:
     """Run CV extraction prompts against Gemini."""
 
@@ -37,11 +46,9 @@ class GeminiCvExtractionService:
         *,
         api_key: str,
         model: str,
-        api_version: str,
     ) -> None:
         self.api_key = api_key
         self.model = model
-        self.api_version = api_version
 
     async def extract_from_text(self, *, cv_text: str) -> CvExtractionResult:
         """Extract a structured candidate profile from plain CV text."""
@@ -49,10 +56,7 @@ class GeminiCvExtractionService:
 
     async def extract_from_file(self, *, file_path: Path, mime_type: str) -> CvExtractionResult:
         """Extract a structured candidate profile from an uploaded CV file."""
-        async with genai.Client(
-            api_key=self.api_key,
-            http_options=types.HttpOptions(api_version=self.api_version),
-        ).aio as client:
+        async with genai.Client(api_key=self.api_key).aio as client:
             uploaded_file = await client.files.upload(
                 file=file_path,
                 config=types.UploadFileConfig(
@@ -75,7 +79,13 @@ class GeminiCvExtractionService:
             try:
                 response = await client.models.generate_content(
                     model=self.model,
-                    contents=[self._extraction_prompt(), uploaded_file],
+                    contents=[
+                        self._extraction_prompt(),
+                        types.Part.from_uri(
+                            file_uri=uploaded_file.uri,
+                            mime_type=uploaded_file.mime_type,
+                        ),
+                    ],
                     config=self._generation_config(),
                 )
             finally:
@@ -83,13 +93,48 @@ class GeminiCvExtractionService:
 
         return self._parse_response(response=response)
 
+    async def decide_clarification(
+        self,
+        *,
+        extracted_profile: str,
+        missing_info: list[str],
+        preference_hints: list[str],
+        clarification_turns: list[dict[str, str]],
+        verification_summary: str | None = None,
+    ) -> ClarificationDecision:
+        """Decide whether another clarification question is needed."""
+        turns_text = "\n".join(
+            f"Q: {turn['question']}\nA: {turn['answer']}" for turn in clarification_turns
+        ).strip()
+        if not turns_text:
+            turns_text = "No clarification answers yet."
+
+        contents = [
+            self._clarification_prompt(),
+            (
+                f"Extracted profile:\n{extracted_profile}\n\n"
+                f"Current missing info:\n{self._format_list(missing_info)}\n\n"
+                f"Current preference hints:\n{self._format_list(preference_hints)}\n\n"
+                f"Clarification history:\n{turns_text}\n\n"
+                f"Verification summary:\n{verification_summary or 'No verification summary yet.'}"
+            ),
+        ]
+        async with genai.Client(api_key=self.api_key).aio as client:
+            response = await client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=ClarificationDecision,
+                ),
+            )
+        return self._parse_clarification_response(response=response)
+
     async def _generate_with_contents(
         self, *, contents: list[str | types.File]
     ) -> CvExtractionResult:
-        async with genai.Client(
-            api_key=self.api_key,
-            http_options=types.HttpOptions(api_version=self.api_version),
-        ).aio as client:
+        async with genai.Client(api_key=self.api_key).aio as client:
             response = await client.models.generate_content(
                 model=self.model,
                 contents=contents,
@@ -128,13 +173,32 @@ class GeminiCvExtractionService:
         )
 
     def _parse_response(self, *, response) -> CvExtractionResult:
-        if isinstance(response.parsed, CvExtractionResult):
-            return response.parsed
-        if isinstance(response.parsed, dict):
-            return CvExtractionResult.model_validate(response.parsed)
-        if response.text:
-            return CvExtractionResult.model_validate_json(response.text)
+        try:
+            if isinstance(response.parsed, CvExtractionResult):
+                return response.parsed
+            if isinstance(response.parsed, dict):
+                return CvExtractionResult.model_validate(response.parsed)
+            if response.text:
+                return CvExtractionResult.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise GeminiIntegrationError("Gemini returned an invalid extraction payload.") from exc
+
         raise GeminiIntegrationError("Gemini returned an empty extraction response.")
+
+    def _parse_clarification_response(self, *, response) -> ClarificationDecision:
+        try:
+            if isinstance(response.parsed, ClarificationDecision):
+                return response.parsed
+            if isinstance(response.parsed, dict):
+                return ClarificationDecision.model_validate(response.parsed)
+            if response.text:
+                return ClarificationDecision.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise GeminiIntegrationError(
+                "Gemini returned an invalid clarification payload."
+            ) from exc
+
+        raise GeminiIntegrationError("Gemini returned an empty clarification response.")
 
     @staticmethod
     def _extraction_prompt() -> str:
@@ -155,6 +219,33 @@ class GeminiCvExtractionService:
             "Do not mention that you are reading a file. Do not wrap the output in markdown."
         )
 
+    @staticmethod
+    def _clarification_prompt() -> str:
+        return (
+            "You are deciding the next clarification step after CV extraction for a hiring "
+            "workflow. "
+            "Return structured JSON with four fields only: needs_more_context, question, "
+            "missing_info, preference_hints. "
+            "If the candidate context is still missing important job-search constraints or "
+            "preferences, set needs_more_context=true and ask exactly one concise, high-value next "
+            "question in question. "
+            "If there is already enough context to continue, set needs_more_context=false and "
+            "question=null. "
+            "Update missing_info to contain only the still-open factual gaps. "
+            "Update preference_hints to reflect only evidence from the CV and clarification "
+            "answers. "
+            "Prefer questions about location, remote/on-site, employment type, salary "
+            "expectations, "
+            "notice period, visa/work authorization, target roles, industry preferences, and hard "
+            "constraints. "
+            "Do not ask multiple questions at once. Match the dominant language of the profile or "
+            "clarification history when obvious. Do not wrap the output in markdown."
+        )
+
+    @staticmethod
+    def _format_list(items: list[str]) -> str:
+        return "\n".join(f"- {item}" for item in items) if items else "- None"
+
 
 @lru_cache(maxsize=1)
 def get_gemini_cv_extraction_service() -> GeminiCvExtractionService:
@@ -166,5 +257,4 @@ def get_gemini_cv_extraction_service() -> GeminiCvExtractionService:
     return GeminiCvExtractionService(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
-        api_version=settings.gemini_api_version,
     )

@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import inspect
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.db.engine import with_session
+from src.extensions.arq.middleware import arq_job_middleware
+from src.logger import get_logger
+from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
+from src.modules.onboarding.repository import OnboardingSessionsRepository
+from src.modules.onboarding.use_cases.advance_onboarding_flow import (
+    _apply_graph_state_to_onboarding_session,
+)
+from src.workflows.search_setup.runtime import get_search_setup_graph
+
+logger = get_logger("arq.jobs.extraction")
+
+
+@arq_job_middleware
+@with_session
+async def process_cv_extraction_workflow(
+    ctx: dict,
+    workflow_run_id: str,
+    *,
+    session: AsyncSession,
+) -> None:
+    """Run the extraction workflow in the background and persist the result."""
+    _ = ctx
+    repository = ExtractionWorkflowRunsRepository(session=session)
+    onboarding_repository = OnboardingSessionsRepository(session=session)
+    workflow_run = await repository.get_by_id(workflow_run_id=UUID(workflow_run_id))
+    if workflow_run is None:
+        raise RuntimeError(f"Extraction workflow run not found: {workflow_run_id}")
+    onboarding_session = None
+    if workflow_run.onboarding_session_id:
+        onboarding_session = await onboarding_repository.get_by_id(
+            onboarding_session_id=workflow_run.onboarding_session_id
+        )
+
+    workflow_run.status = "extracting"
+    workflow_run.error_message = None
+    if onboarding_session is not None:
+        onboarding_session.status = "extracting"
+        onboarding_session.current_step = "extraction"
+        onboarding_session.last_error_message = None
+    await session.commit()
+
+    try:
+        graph = get_search_setup_graph()
+        if inspect.isawaitable(graph):
+            graph = await graph
+        thread_id = str(onboarding_session.id) if onboarding_session else str(workflow_run.id)
+        config = {"configurable": {"thread_id": thread_id}}
+        result = await graph.ainvoke(
+            {
+                "messages": [],
+                "status": "ingesting",
+                "user_id": workflow_run.user_id,
+                "onboarding_session_id": str(onboarding_session.id) if onboarding_session else "",
+                "cv_object_key": workflow_run.storage_key,
+                "cv_object_uri": getattr(workflow_run, "storage_uri", ""),
+                "cv_filename": workflow_run.cv_filename,
+                "cv_content_type": workflow_run.cv_content_type,
+                "cv_extension": workflow_run.cv_extension,
+                "extraction_strategy": workflow_run.extraction_strategy,
+                "clarification_turns": [],
+                "clarification_cycle_start_index": 0,
+                "verification_retry_count": 0,
+            },
+            config,
+            durability="sync",
+        )
+        snapshot = await graph.aget_state(config)
+        values = snapshot.values or {}
+    except Exception as exc:
+        workflow_run.status = "failed"
+        workflow_run.error_message = str(exc)
+        if onboarding_session is not None:
+            onboarding_session.status = "failed"
+            onboarding_session.current_step = "extraction"
+            onboarding_session.last_error_message = str(exc)
+        await session.commit()
+        logger.error(
+            "cv_extraction_workflow_failed",
+            workflow_run_id=workflow_run.id,
+            user_id=workflow_run.user_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+
+    workflow_run.extracted_profile = values.get("extracted_profile")
+    workflow_run.missing_info = values.get("missing_info", [])
+    workflow_run.preference_hints = values.get("preference_hints", [])
+    workflow_run.extraction_model = values.get("extraction_model")
+    workflow_run.error_message = None
+    if onboarding_session is not None:
+        onboarding_session.latest_workflow_run_id = workflow_run.id
+        onboarding_session.extracted_profile = values.get("extracted_profile")
+        onboarding_session.extraction_model = values.get("extraction_model")
+        _apply_graph_state_to_onboarding_session(
+            onboarding_session=onboarding_session,
+            graph_result=result,
+            graph_values=values,
+        )
+        workflow_run.status = onboarding_session.status
+    else:
+        workflow_run.status = values.get("status", workflow_run.status)
+    await session.commit()
+
+    logger.info(
+        "cv_extraction_workflow_persisted",
+        workflow_run_id=workflow_run.id,
+        onboarding_session_id=workflow_run.onboarding_session_id,
+        user_id=workflow_run.user_id,
+        status=workflow_run.status,
+    )

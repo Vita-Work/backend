@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 import aioboto3
-import aiofiles
 from aiobotocore.config import AioConfig
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError
@@ -66,6 +65,7 @@ class S3Storage:
         self._secret_access_key = secret_access_key
         self._session = aioboto3.Session()
         self._client_config = AioConfig(
+            signature_version="s3v4",
             retries={"max_attempts": 5, "mode": "adaptive"},
             connect_timeout=connect_timeout_seconds,
             read_timeout=read_timeout_seconds,
@@ -178,11 +178,12 @@ class S3Storage:
         """Download an object to a local file path without buffering the whole object in memory."""
         try:
             async with self.client() as client:
-                response = await client.get_object(Bucket=self.bucket_name, Key=key)
-                async with response["Body"] as stream:
-                    async with aiofiles.open(destination, "wb") as file_obj:
-                        while chunk := await stream.read(1024 * 1024):
-                            await file_obj.write(chunk)
+                await client.download_file(
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Filename=str(destination),
+                    Config=self._transfer_config,
+                )
         except ClientError as exc:
             logger.error(
                 "s3_download_to_path_failed",

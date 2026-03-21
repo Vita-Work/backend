@@ -29,8 +29,9 @@ Configured upload limit:
 4. Backend chooses extraction strategy:
    - `pdf` -> `model_file`
    - `docx/txt/md` -> `local_text`
-5. LangGraph runs the `search_setup` extraction node.
-6. Gemini returns structured output:
+5. `POST /extraction/cv/run` persists a workflow run and enqueues background processing in ARQ.
+6. The worker starts the unified `search_setup` graph at the `extraction` node.
+7. Gemini returns structured output:
    - `extracted_profile`
    - `missing_info`
    - `preference_hints`
@@ -58,10 +59,12 @@ Used for `docx`, `txt`, and `md`.
 
 - `src/modules/extraction/routes.py`
 - `src/modules/extraction/use_cases/intake_cv.py`
-- `src/modules/extraction/use_cases/run_cv_extraction.py`
+- `src/modules/extraction/use_cases/queue_cv_extraction.py`
+- `src/modules/extraction/use_cases/get_cv_extraction_run.py`
 - `src/modules/extraction/parsers/cv.py`
 - `src/extensions/s3/s3.py`
 - `src/extensions/gemini/gemini.py`
+- `src/extensions/arq/jobs/extraction.py`
 - `src/workflows/search_setup/nodes/extraction.py`
 - `src/workflows/search_setup/graph.py`
 
@@ -92,7 +95,14 @@ Start the server:
 
 ```bash
 uv sync --extra dev
+uv run alembic upgrade head
 uv run uvicorn src.main:app --reload
+```
+
+Run the worker in a second terminal:
+
+```bash
+uv run arq src.extensions.arq.arq_common.WorkerSettings
 ```
 
 Run extraction end-to-end:
@@ -106,6 +116,6 @@ curl -X POST http://127.0.0.1:8000/extraction/cv/run \
 ## Notes
 
 - The upload-only endpoint is useful for checking validation and storage without running Gemini.
-- The end-to-end endpoint is the main manual testing path.
+- The end-to-end endpoint queues work and returns immediately with a workflow run id.
 - If S3 credentials are invalid, upload fails before Gemini starts.
 - If `GEMINI_API_KEY` is missing or invalid, the workflow fails at extraction time.

@@ -1,6 +1,7 @@
 """Gemini integration helpers."""
 
 from src.extensions.gemini.gemini import (
+    ClarificationDecision,
     CvExtractionResult,
     GeminiCvExtractionService,
     GeminiIntegrationError,
@@ -8,6 +9,7 @@ from src.extensions.gemini.gemini import (
 )
 
 __all__ = [
+    "ClarificationDecision",
     "CvExtractionResult",
     "GeminiCvExtractionService",
     "GeminiIntegrationError",

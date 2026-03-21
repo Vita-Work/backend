@@ -1,4 +1,5 @@
 import asyncio
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 from src.workflows import build_search_setup_graph
@@ -45,6 +46,7 @@ def test_search_setup_graph_runs_extraction_for_local_text(monkeypatch) -> None:
                 "messages": [HumanMessage(content="Start workflow")],
                 "status": "ingesting",
                 "user_id": "user-1",
+                "onboarding_session_id": str(uuid4()),
                 "cv_object_key": "vita/cv/1/resume.txt",
                 "cv_object_uri": "s3://bucket/vita/cv/1/resume.txt",
                 "cv_filename": "resume.txt",
@@ -52,7 +54,8 @@ def test_search_setup_graph_runs_extraction_for_local_text(monkeypatch) -> None:
                 "cv_extension": ".txt",
                 "extraction_strategy": "local_text",
                 "cv_inline_text": "Senior Backend Engineer\nPython FastAPI",
-            }
+            },
+            interrupt_after=["extraction"],
         )
     )
 
@@ -83,13 +86,15 @@ def test_search_setup_graph_runs_pdf_path(monkeypatch) -> None:
                 "messages": [HumanMessage(content="Start workflow")],
                 "status": "ingesting",
                 "user_id": "user-2",
+                "onboarding_session_id": str(uuid4()),
                 "cv_object_key": "vita/cv/1/resume.pdf",
                 "cv_object_uri": "s3://bucket/vita/cv/1/resume.pdf",
                 "cv_filename": "resume.pdf",
                 "cv_content_type": "application/pdf",
                 "cv_extension": ".pdf",
                 "extraction_strategy": "model_file",
-            }
+            },
+            interrupt_after=["extraction"],
         )
     )
 
