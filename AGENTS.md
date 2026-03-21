@@ -1,162 +1,188 @@
-## Critical Rules
+# Backend Agent Guide
 
-### 1. NO assumptions
-- **Always ask** if something is unclear
-- State your assumptions explicitly before starting and wait for confirmation
-- If multiple interpretations exist — list them and clarify
+This file defines how coding agents should work in this backend repository.
+Apply the same rules to implementation, refactors, debugging, and reviews.
 
-### 2. Surface issues
-- If you spot inconsistencies in code or requirements — **report them**, don't ignore
-- Present tradeoffs explicitly: "Option A: [pros/cons], Option B: [pros/cons]"
-- **Push back** if request seems wrong, overcomplicated, or unnecessary
+## 1. Operating Principles
 
-### 3. Simplicity > Complexity
-- Propose the **minimal solution** first
-- No extra abstractions, classes, layers without explicit need
-- Ask yourself: "Can this be 10x simpler?" — if yes, do it simpler
+### Stay accurate
+- Do not invent behavior, APIs, settings, or DB schema details.
+- If ambiguity changes business logic, public API, schema, or migration shape, stop and ask.
+- If ambiguity is minor, state the assumption briefly and proceed with the safest minimal option.
 
-### 4. Don't touch what's outside the task scope
-- **Forbidden** to change/remove comments, code, formatting unrelated to current task
-- If you see "bad" code nearby — you may mention it, but **don't modify** without request
+### Stay in scope
+- Change only what is required for the current task.
+- Do not rewrite nearby code "for cleanliness" unless it directly blocks the task.
+- If you notice a separate issue, mention it explicitly instead of silently fixing unrelated areas.
 
-### 5. Clean up after yourself
-- After refactoring, remove dead code, unused imports
-- Don't leave commented-out old code
+### Prefer the simplest working solution
+- Start with the smallest change that solves the problem.
+- Do not add abstractions, services, base classes, or helpers without repeated need.
+- Prefer explicit code over clever code.
 
-### 6. Plan before code
-- For tasks > 50 lines, describe plan in 3-5 bullet points first
-- Wait for "ok" before implementation
+### Leave the codebase cleaner
+- Remove dead code, stale imports, and temporary debug leftovers created during the task.
+- Do not leave commented-out code behind.
+- Update docstrings, examples, and related docs when behavior changes.
 
-## Response format
+## 2. Expected Work Style
 
-- Brief, to the point
-- Code without redundant comments like `// increment counter`
-- If uncertain — say so directly, don't make things up
+### Before coding
+- Read the relevant files first.
+- Identify which layer owns the change: route, use-case, repository, service, middleware, or config.
+- For medium or large changes, outline a short plan before editing.
 
-## Comments & Docstrings
+### While coding
+- Preserve existing user changes.
+- Keep diffs focused and easy to review.
+- Prefer typed, explicit function signatures over passing loosely structured dicts through many layers.
 
-### Comments
-- Comments must explain **why**, constraints, tradeoffs, or non-obvious behavior, not restate the code.
-- Prefer fixing unclear code over adding explanatory comments for obvious logic.
-- Use only a small set of explicit comment markers:
-  - `# TODO:` planned improvement that is intentionally postponed.
-  - `# FIXME:` known bug, broken edge case, or incorrect temporary behavior.
-  - `# NOTE:` important context, invariant, or caveat that future readers must know.
-  - `# HACK:` intentional workaround for a framework, library, or legacy limitation.
-  - `# PERF:` performance-sensitive area where changes require extra care.
-- Every tagged comment must be actionable and specific. Bad: `# TODO: improve this`. Good: `# TODO: replace in-memory cache with Redis before enabling multi-instance deployment`.
-- Do not leave commented-out code in the repository.
+### After coding
+- Run the smallest meaningful verification for the touched area.
+- Report clearly what was verified and what was not run.
+- If something could not be verified locally, say so directly.
 
-### Docstrings
-- Write docstrings in English for public modules, classes, functions, and methods that define behavior or contracts.
-- Skip docstrings for trivial private helpers unless behavior is non-obvious.
-- Start with a short imperative summary line.
-- Add details only when they provide real value: side effects, transaction boundaries, invariants, raised exceptions, or integration expectations.
-- For non-trivial functions use a consistent section style with `Args:`, `Returns:`, and `Raises:` when applicable.
-- Keep docstrings implementation-light: describe behavior and contract, not line-by-line internals.
-- Update docstrings together with code changes; stale docstrings are treated as bugs.
+## 3. Architecture Rules
 
+The backend uses a modular FastAPI structure with shared infrastructure in `src/`.
 
----
+### Layer responsibilities
+- `src/main.py`: app assembly, middleware, router registration, lifecycle wiring.
+- `src/config.py`: all settings access and environment-driven configuration.
+- `src/logger.py`: logging setup and shared logging helpers.
+- `src/db/`: engine, sessions, base classes, shared DB primitives.
+- `src/modules/<feature>/routes.py`: thin HTTP layer only.
+- `src/modules/<feature>/use_cases/`: business orchestration and domain decisions.
+- `src/modules/<feature>/repository.py`: database access only.
+- `src/services/`: external providers and third-party integrations.
+- `src/extensions/`: framework or infrastructure adapters like ARQ and Redis.
 
-# Backend Core Principles
+### Boundaries
+- Routes validate input, call use-cases, and map results to schemas.
+- Use-cases own business flow, permissions, orchestration, and transaction intent.
+- Repositories do not contain HTTP concerns or business policy.
+- Services do not read FastAPI request objects directly.
+- Do not put business logic in models, route handlers, or middleware.
 
-This document outlines the architectural standards and core principles for the backend implementation. These guidelines ensure consistency, scalability, and maintainability across all features.
+## 4. Coding Standards
 
-## 1. Project Organization
-The system follows a **Modular Feature-Based Architecture**. Each business domain is isolated to ensure high cohesion and low coupling.
+### General style
+- Use Python type hints consistently.
+- Keep public docstrings in English.
+- Comments should explain why, constraints, or non-obvious tradeoffs.
+- Prefer small functions with explicit names.
+- Prefer keyword arguments when a function takes multiple IDs or similar primitives.
 
-*   **`src/` root infrastructure**: Shared application infrastructure. At the current stage this includes configuration and logging modules such as `src/config.py` and `src/logger.py`. If shared infrastructure grows, it may be moved into `src/core/`.
-*   **`src/db/`**: Persistence layer. Configures the asynchronous database engine, session management, and base mixins (e.g., UUID primary keys, timestamps).
-*   **`src/modules/<feature>/`**: Domain-specific capsules. Every module must follow a fixed structure:
-    *   `models.py`: SQLAlchemy database models.
-    *   `schemas.py`: Pydantic request/response contracts.
-    *   `use_cases/`: Business logic layer. Each Python file encapsulates one high-level feature or processing pipeline. Examples:
-        *   `notification_dispatch.py` — orchestrates sending notifications across channels (email, push, Telegram)
-        *   `data_ingestion.py` — handles bulk import, validation, and normalization of incoming data
-        *   `report_generation.py` — aggregates data and produces structured reports
-        *   `access_control.py` — enforces permission checks and role-based logic
-        *   `sync_pipeline.py` — manages incremental sync with external services
-    *   `repository.py`: Data access layer. Centralizes all CRUD and query operations. Use-cases import from here instead of duplicating DB logic. If multiple use-cases share the same create/update/delete pattern — it belongs here, not inline.
-    *   `routes.py`: API endpoint definitions (thin layer).
-    *   `exceptions.py`: Errors specific to this domain.
-*   **`src/services/`**: External integrations. High-level adapters for third-party systems (e.g., Telegram bots, hashing services).
-*   **`src/extensions/`**: Lightweight integrations for external tools like Redis or Task Queues.
+### Function design
+- Pass important identifiers explicitly, for example `user_id`, `project_id`, `job_id`.
+- Avoid vague names like `id`, `data`, `item`, or `payload` when a more specific name exists.
+- Avoid boolean flag explosions. If behavior branches heavily, split the function.
+- Return domain-relevant values, not half-structured tuples that force callers to guess meanings.
 
-## 2. Configuration Management
-*   **Type Safety**: Driven by `pydantic-settings`. All environment variables are validated at startup.
-*   **Environment Specificity**: Configuration is loaded from `.env` files (e.g., `.env.staging`, `.env.production`).
-*   **Centralization**: The application only interacts with settings through `src.config`.
+### Async discipline
+- Keep database and I/O paths async-first.
+- Do not introduce blocking network or disk work into request handlers or async jobs.
+- If a task must run in background, make that boundary explicit.
 
-## 3. Database & Migrations (Alembic)
-*   **Async-First**: All database interactions use asynchronous SQLAlchemy.
-*   **Alembic Integration**:
-    *   **Model Registry**: `src/db/all_models.py` MUST import every model in the project. Alembic uses this central registry for schema autogeneration.
-    *   **Async Migrations**: `alembic/env.py` is configured to execute migrations via the async engine, ensuring compatibility with the main application runtime.
-    *   **Execution Rule**: Use `uv run alembic <command>` for migration workflows. Prefer `revision --autogenerate`, review, then `upgrade head`.
-    *   **Sandbox Rule**: If DB access is required, run migration commands outside sandbox only after explicit user approval.
-*   **Schema Consistency**: All models inherit from a common `Base` and use standard mixins for auditing and identification.
+## 5. Logging And Observability
 
-## 4. Lifecycle & Entrypoint
-*   **Entrypoint**: `src/main.py` is the definitive entrypoint where the FastAPI instance is initialized.
-*   **Lifespan Management**: Asynchronous resources (connection pools, bot clients) are initialized and terminated using the FastAPI `lifespan` context manager to ensure graceful shutdowns.
-*   **Decoupled Routing**: Routers are defined within modules and registered in `main.py` using a consistent versioning prefix (e.g., `/api/v1`).
+Use the shared logger from `src.logger`. Logging in this project is structured and context-aware.
 
-## 5. Error Handling
-*   **Standardized Responses**: A hierarchy of exceptions starting from a base `AppException`.
-*   **Exception Mapping**: Global handlers in `main.py` transform exceptions into consistent JSON responses. This prevents internal stack traces from leaking to clients while providing actionable feedback.
+### Base rules
+- Always create loggers via `from src.logger import get_logger`.
+- Define the logger once per module, for example `logger = get_logger("users.sync")`.
+- Event names must be short, stable, and `snake_case`.
+- Put context in structured fields, not inside formatted message strings.
 
-## 6. Engineering Standards
-*   **Dependency Management**: `uv` is the standard for fast and reproducible environment setup.
-    *   **Running the API**: Use `uv run uvicorn src.main:app --reload` for local development.
-    *   **Running Background Jobs**: Use `uv run arq src.extensions.arq.arq_common.WorkerSettings` when the project needs ARQ workers.
-    *   **Adding Dependencies**: Use `uv add <package>` to install new libraries and automatically update `pyproject.toml`.
-    *   **Principle**: Never use `pip` directly. Using `uv run` ensures that the lockfile is respected and the environment is consistent.
-*   **Diagnostics**: Centralized logging via `structlog` provides structured, readable output across all application layers.
-*   **Separation of Concerns**: Routes perform validation, use-cases implement logic, repositories handle data access, and models define state. No business logic should reside in the routing layer.
+Good:
 
-## 7. Basic Testing Strategy
-*   **Iterative Endpoint Validation**:
-    *   **Process**: Sequentially test endpoints against the running local server. **One request at a time.**
-    *   **Cycle**: Request -> Analyze Response -> Fix Bug (if any) -> Retry -> Next Endpoint.
-    *   **Scope**: Covers functional correctness, error handling (4xx/5xx), and data integrity.
-    *   **Tools**: Use `curl` or HTTP clients for verification, ensuring the application state evolves correctly.
+```python
+logger.info(
+    "user_sync_started",
+    user_id=user_id,
+    provider="telegram",
+)
+```
 
-## 8. Git Standards
-*   **Conventional Commits**: All commit messages MUST follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) specification.
-    *   Format: `<type>[optional scope]: <description>`
-    *   Types: `feat:` (new feature), `fix:` (bug fix), `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `chore:`, `build:`, `ci:`.
-    *   Example: `feat(auth): add JWT refresh token support`
-*   **Before Commit Checklist**:
-    *   Run `pre-commit run --all-files` before creating a commit.
-    *   If hooks modify files, review the changes, `git add` them again, and rerun the commit.
-    *   Do not commit with failing hooks, lint errors, or formatting drift.
-    *   Keep the commit scoped to one logical change-set when possible.
-*   **Commit Message Rule**:
-    *   Subject line must be short, imperative, and specific.
-    *   Avoid vague messages such as `update`, `fix stuff`, `changes`, or `init architecture`.
-    *   Prefer messages like `chore(template): add FastAPI and ARQ project scaffold`.
-*   **Branching Strategy**:
-    *   **Default Branch**: All development work and commits MUST be directed to the `dev` branch by default.
-    *   **Main Branch**: Commits to the `main` branch are only permitted if explicitly requested by the USER or for production releases.
-    *   **Workflow**: Always check the current branch before committing. If on `main` without specific instructions, switch to `dev`.
+Bad:
 
-## 9. Delivery Discipline (Additional)
-*   **Commit Granularity**:
-    *   Create a separate commit after each logical change-set (not one huge mixed commit).
-    *   If the user explicitly requests push after each change-set, push immediately after each commit.
-*   **Bug Handling Rule**:
-    *   If any bug is discovered during implementation or testing, fix it immediately before moving to the next test or feature.
-*   **Verification Rule**:
-    *   Validate features with real API calls (`curl`/HTTP) and confirm critical results with direct DB checks.
-*   **Migration Safety**:
-    *   Database migrations are manual-only (`uv run alembic ...`).
-    *   Do not add automatic pre-deploy migration hooks.
-*   **Incremental Sync Integrity**:
-    *   For connector sync flows, process only new data after watermark unless user explicitly requests a resync mode.
-*   **Secrets Hygiene**:
-    *   Keep secrets only in environment files/secrets manager.
-    *   Never commit secrets; keep `.env.example` sanitized and `gitignore` strict.
-*   **Agent-Native Parity**:
-    *   Any important user capability should have agent parity where applicable.
-    *   Agent operations must be auditable.
+```python
+logger.info(f"Started sync for user {user_id} in telegram")
+```
+
+### IDs and context
+- Pass IDs as explicit log fields: `request_id`, `user_id`, `job_id`, `project_id`, `task_id`.
+- If several IDs are present, use precise names instead of a generic `id`.
+- If the same context is needed for several logs in one scope, bind it once:
+
+```python
+log = logger.bind(user_id=user_id, project_id=project_id)
+log.info("project_sync_started")
+log.info("project_sync_finished", imported_count=items_count)
+```
+
+- Do not bind large mutable objects, ORM instances, request bodies, or secrets.
+
+### Request and job correlation
+- HTTP requests already get `request_id` from `RequestContextMiddleware`.
+- When calling external services from a request flow, propagate the current request id when useful via `get_current_request_id()`.
+- Background jobs should preserve correlation context. When enqueueing ARQ jobs, pass `_parent_request_id` and `_user_id` if they exist.
+- Inside ARQ jobs, rely on the middleware binding instead of manually rebuilding the context each time.
+
+### What to log
+- Log meaningful lifecycle points for long-running or failure-prone work:
+- request start / finish / failure
+- external API start / finish / failure
+- background job start / finish / failure
+- important state transitions
+
+- Include quantitative fields when useful: `duration_seconds`, `status_code`, `items_count`, `retry_attempt`.
+- Use `exc_info=True` for unexpected exceptions.
+- Avoid duplicate error logs in every layer. Log once where the error becomes actionable or where context is richest.
+
+### Sensitive data
+- Never log passwords, tokens, secrets, raw authorization headers, or full sensitive payloads.
+- Avoid logging personal data unless it is operationally necessary and approved by product requirements.
+- Prefer IDs and safe metadata over raw content.
+
+## 6. Error Handling
+
+- Fail fast on invalid input.
+- Raise domain-specific exceptions from use-cases and repositories where appropriate.
+- Keep error responses consistent and mapped centrally.
+- Do not swallow exceptions silently.
+- If catching an exception only to log it, either re-raise it or convert it into a well-defined domain error.
+
+## 7. Database And Migrations
+
+- Use async SQLAlchemy consistently.
+- Register every model in `src/db/all_models.py` for Alembic autogeneration.
+- Use `uv run alembic revision --autogenerate` and review the migration before applying it.
+- Keep migrations manual; do not add auto-run migration hooks.
+- Repository methods should encapsulate query logic so it is not duplicated across use-cases.
+
+## 8. Testing And Verification
+
+- Verify the touched behavior, not just syntax.
+- Prefer the smallest meaningful test scope first: unit test, then integration path, then endpoint flow.
+- For API work, validate with real HTTP requests when practical.
+- Check logs and persisted state when the change affects jobs, external sync, or DB writes.
+- Fix discovered bugs before moving on to unrelated follow-up work.
+
+## 9. Git And Delivery
+
+- Use Conventional Commits.
+- Keep one logical change per commit when possible.
+- Run `pre-commit run --all-files` before committing.
+- Do not commit failing lint, formatting, or test states.
+- Default development branch is `dev` unless the user explicitly asks otherwise.
+
+## 10. Review Checklist
+
+Before considering the task done, confirm:
+- the change lives in the correct layer
+- logging uses structured fields instead of string interpolation
+- IDs are passed with explicit names
+- no secrets are logged
+- dead code and unused imports are removed
+- verification was run or the gap was clearly reported
