@@ -1,0 +1,254 @@
+{
+  "summary_markdown": "No jobs were found that matched your criteria. Several sites were skipped due to region mismatches, and Indeed failed to retrieve job details, preventing full filtering.",
+  "top_matches": [],
+  "site_results": [
+    {
+      "site": "computrabajo",
+      "status": "skipped",
+      "reason": "region_mismatch: candidate=['US'], site=['MX']",
+      "queries_used": [],
+      "listings_seen": [],
+      "selected_jobs": [],
+      "notes": []
+    },
+    {
+      "site": "devkg",
+      "status": "skipped",
+      "reason": "region_mismatch: candidate=['US'], site=['KG']",
+      "queries_used": [],
+      "listings_seen": [],
+      "selected_jobs": [],
+      "notes": []
+    },
+    {
+      "site": "getonbrd",
+      "status": "skipped",
+      "reason": "region_mismatch: candidate=['US'], site=['AR', 'BO', 'BR', 'CL', 'CO', 'CR', 'DO', 'EC', 'GT', 'HN', 'MX', 'NI', 'PA', 'PE', 'PY', 'SV', 'UY', 'VE']",
+      "queries_used": [],
+      "listings_seen": [],
+      "selected_jobs": [],
+      "notes": []
+    },
+    {
+      "site": "habr_career",
+      "status": "skipped",
+      "reason": "region_mismatch: candidate=['US'], site=['RU']",
+      "queries_used": [],
+      "listings_seen": [],
+      "selected_jobs": [],
+      "notes": []
+    },
+    {
+      "site": "hh",
+      "status": "skipped",
+      "reason": "region_mismatch: candidate=['US'], site=['RU']",
+      "queries_used": [],
+      "listings_seen": [],
+      "selected_jobs": [],
+      "notes": []
+    },
+    {
+      "site": "indeed",
+      "status": "failed",
+      "reason": "Failed to retrieve job details for shortlisted jobs, preventing full hard preference filtering (salary, must-have skills). No jobs could be confidently selected.",
+      "queries_used": [
+        "Remote Frontend Engineer React TypeScript",
+        "Remote Software Engineer Frontend React TypeScript"
+      ],
+      "listings_seen": [
+        {
+          "site": "indeed",
+          "title": "Senior React Native Engineer (Mobile Product Focus)",
+          "company_name": "Oowlish",
+          "location": "Remote in Chicago, IL",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=c4108bc430fd4fa1",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Senior Front End Angular Developer Public Trust (Remote) TT",
+          "company_name": "ICF",
+          "location": "Remote in Reston, VA 20190",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=4cd5f3c612914652",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Web Manager",
+          "company_name": "Portnox",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=12011cef9ae24d8b",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Software Engineer, Mobile",
+          "company_name": "Watts Regulator Company",
+          "location": "Remote in Andover, MA 01845",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=a16508646433495c",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Front-End Developer, SME",
+          "company_name": "Potawatomi Federal Solutions",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=758366d0dfcf20fb",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Senior Software Engineer, Mobile",
+          "company_name": "Zwift",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=331a812ca2c937b9",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Frontend Engineer, Trust & Safety",
+          "company_name": "Chess.com",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=55aa9728799f9c9e",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Principal Frontend Engineer",
+          "company_name": "OutSystems",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=c2eb18c0e8bb1a8f",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Front End UI/UX Developer",
+          "company_name": "INFO ORIGIN INC",
+          "location": "Remote in Indianapolis, IN",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=b4c382b4e2c29e06",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Front End Developer - Mid-level",
+          "company_name": "Maximus",
+          "location": "Remote in Tysons, VA 22102",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=3edd817d1ecabd99",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Staff Software Engineer",
+          "company_name": "The RealReal",
+          "location": "Remote in Bellflower, CA 90706",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=f5ce52770a08f26a",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Software Engineer-C# Angular Azure",
+          "company_name": "H&R Block",
+          "location": "Remote in Kansas City, MO 64105",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=d65e60bb4cdb4901",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Developer II (Remote in WA, OR, ID)",
+          "company_name": "Gesa Credit Union",
+          "location": "Remote in Richland, WA 99352",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=f3a68cba32654b7f",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Software Engineer I",
+          "company_name": "Robert Half",
+          "location": "Remote in San Ramon, CA 94583",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=200985dc0e57d6e0",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Staff Software Engineer",
+          "company_name": "Uber",
+          "location": "Remote in Seattle, WA",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=4b17fd9089a29013",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Sr. Developer, Native Apps",
+          "company_name": "USA TODAY Co.",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=58358d83f72312e6",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "Staff Software Engineer",
+          "company_name": "GitHub, Inc.",
+          "location": "None",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=1cf0eddef53d8b96",
+          "company_url": null
+        },
+        {
+          "site": "indeed",
+          "title": "iOS Manager",
+          "company_name": "Veeva Systems",
+          "location": "Remote in Pleasanton, CA",
+          "salary_text": null,
+          "published_at": null,
+          "job_url": "https://www.indeed.com/viewjob?jk=f8b600aded748af0",
+          "company_url": null
+        }
+      ],
+      "selected_jobs": [],
+      "notes": [
+        "Could not fetch details for any shortlisted jobs."
+      ]
+    }
+  ],
+  "skipped_sites": [
+    "computrabajo",
+    "devkg",
+    "getonbrd",
+    "habr_career",
+    "hh"
+  ],
+  "notes": []
+}

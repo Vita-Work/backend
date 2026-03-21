@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     gemini_api_version: str = "v1alpha"
     dspy_model: str | None = None
+    job_parser_site_concurrency: int = 4
+    job_parser_detail_concurrency: int = 8
+    indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
