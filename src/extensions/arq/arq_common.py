@@ -2,6 +2,7 @@ from arq.connections import RedisSettings
 
 from src.config import get_settings
 from src.extensions.arq.jobs.extraction import process_cv_extraction_workflow
+from src.extensions.arq.jobs.search_jobs import process_search_job_workflow
 from src.logger import configure_logging, get_logger
 from src.workflows.search_setup.runtime import (
     start_search_setup_runtime,
@@ -59,7 +60,7 @@ async def on_shutdown(ctx: dict) -> None:
 class WorkerSettings:
     """Default ARQ worker settings for the project template."""
 
-    functions = [process_cv_extraction_workflow]
+    functions = [process_cv_extraction_workflow, process_search_job_workflow]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = REDIS_SETTINGS

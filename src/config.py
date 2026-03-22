@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
     indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
+    search_job_site_agent_max_iterations: int = 15
+    search_job_listing_max_pages: int = 2
+    search_job_listing_max_items: int = 20
+    search_job_site_max_selected_jobs: int = 15
+    search_job_unified_max_jobs: int = 100
+    search_job_unified_batch_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

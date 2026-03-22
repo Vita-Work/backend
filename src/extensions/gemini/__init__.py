@@ -5,7 +5,10 @@ from src.extensions.gemini.gemini import (
     CvExtractionResult,
     GeminiCvExtractionService,
     GeminiIntegrationError,
+    GeminiJobSearchService,
+    UnifiedJobsBatchResult,
     get_gemini_cv_extraction_service,
+    get_gemini_job_search_service,
 )
 
 __all__ = [
@@ -13,5 +16,8 @@ __all__ = [
     "CvExtractionResult",
     "GeminiCvExtractionService",
     "GeminiIntegrationError",
+    "GeminiJobSearchService",
+    "UnifiedJobsBatchResult",
     "get_gemini_cv_extraction_service",
+    "get_gemini_job_search_service",
 ]

@@ -1,7 +1,9 @@
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.engine import get_db_session
+from src.extensions.arq.client import get_arq_redis
 from src.modules.onboarding.schemas import (
     OnboardingSessionResponse,
     SubmitOnboardingAnswerRequest,
@@ -17,9 +19,15 @@ from src.modules.onboarding.use_cases.get_active_onboarding_session import (
 from src.modules.onboarding.use_cases.restart_onboarding_session import (
     restart_onboarding_session,
 )
+from src.modules.search_jobs.use_cases.queue_search_job_workflow import (
+    SearchJobWorkflowEnqueueError,
+    SearchJobWorkflowNotReadyError,
+    queue_search_job_workflow,
+)
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 db_session_dependency = Depends(get_db_session)
+arq_redis_dependency = Depends(get_arq_redis)
 
 
 @router.get("/users/{user_id}/active", response_model=OnboardingSessionResponse)
@@ -88,6 +96,7 @@ async def submit_clarification_answer_route(
     user_id: str,
     payload: SubmitOnboardingAnswerRequest,
     session: AsyncSession = db_session_dependency,
+    arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingSessionResponse:
     """Resume clarification with the user's latest answer."""
     try:
@@ -106,6 +115,18 @@ async def submit_clarification_answer_route(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    if onboarding_session.status == "completed":
+        try:
+            await queue_search_job_workflow(
+                session=session,
+                arq_redis=arq_redis,
+                user_id=user_id,
+            )
+        except (SearchJobWorkflowEnqueueError, SearchJobWorkflowNotReadyError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
 
     return OnboardingSessionResponse.model_validate(onboarding_session)
 
@@ -124,10 +145,12 @@ async def respond_to_onboarding_prompt_route(
     user_id: str,
     payload: SubmitOnboardingAnswerRequest,
     session: AsyncSession = db_session_dependency,
+    arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingSessionResponse:
     """Resume the active onboarding flow with the user's latest answer."""
     return await submit_clarification_answer_route(
         user_id=user_id,
         payload=payload,
         session=session,
+        arq_redis=arq_redis,
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from src.config import get_settings
 from src.logger import get_logger
+from src.workflows.search_job.schemas import UnifiedJob
 
 logger = get_logger("integrations.gemini")
 
@@ -36,6 +38,13 @@ class ClarificationDecision(BaseModel):
     question: str | None = None
     missing_info: list[str] = Field(default_factory=list)
     preference_hints: list[str] = Field(default_factory=list)
+
+
+class UnifiedJobsBatchResult(BaseModel):
+    """Structured unified-job annotation result for one batch."""
+
+    jobs: list[UnifiedJob] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class GeminiCvExtractionService:
@@ -247,6 +256,80 @@ class GeminiCvExtractionService:
         return "\n".join(f"- {item}" for item in items) if items else "- None"
 
 
+class GeminiJobSearchService:
+    """Batch-unify shortlisted jobs into a stable cross-site schema."""
+
+    def __init__(self, *, api_key: str, model: str) -> None:
+        self.api_key = api_key
+        self.model = model
+
+    async def unify_jobs_batch(
+        self,
+        *,
+        search_strategy_summary: str,
+        hard_preferences: list[str],
+        soft_preferences: list[str],
+        batch_jobs: list[dict[str, object]],
+    ) -> UnifiedJobsBatchResult:
+        """Annotate one batch of shortlisted jobs with fit, reasons, and risks."""
+        contents = [
+            self._unification_prompt(),
+            json.dumps(
+                {
+                    "search_strategy_summary": search_strategy_summary,
+                    "hard_preferences": hard_preferences,
+                    "soft_preferences": soft_preferences,
+                    "batch_jobs": batch_jobs,
+                },
+                ensure_ascii=False,
+            ),
+        ]
+        async with genai.Client(api_key=self.api_key).aio as client:
+            response = await client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=UnifiedJobsBatchResult,
+                ),
+            )
+        return self._parse_unified_jobs_batch_response(response=response)
+
+    def _parse_unified_jobs_batch_response(self, *, response) -> UnifiedJobsBatchResult:
+        try:
+            if isinstance(response.parsed, UnifiedJobsBatchResult):
+                return response.parsed
+            if isinstance(response.parsed, dict):
+                return UnifiedJobsBatchResult.model_validate(response.parsed)
+            if response.text:
+                return UnifiedJobsBatchResult.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise GeminiIntegrationError(
+                "Gemini returned an invalid unified-jobs batch payload."
+            ) from exc
+
+        raise GeminiIntegrationError("Gemini returned an empty unified-jobs batch response.")
+
+    @staticmethod
+    def _unification_prompt() -> str:
+        return (
+            "You are unifying shortlisted jobs from multiple job sites into a stable "
+            "search funnel. "
+            "Return JSON with two fields only: jobs and notes. "
+            "For every input batch job, return exactly one output job in jobs. "
+            "Preserve factual job fields from the input whenever present. "
+            "Add why_apply as one concise explanation of why the user should consider the role. "
+            "Add risks as concise bullets highlighting mismatches, uncertainty, or downsides. "
+            "Add fit_level as one of: low, middle, high. "
+            "Fit level must reflect the approved search strategy summary and "
+            "hard preferences, "
+            "and soft preferences. "
+            "Do not invent facts not supported by the input. "
+            "Keep notes short and use them only for batch-level caveats."
+        )
+
+
 @lru_cache(maxsize=1)
 def get_gemini_cv_extraction_service() -> GeminiCvExtractionService:
     """Build and cache the shared Gemini CV extraction service."""
@@ -255,6 +338,19 @@ def get_gemini_cv_extraction_service() -> GeminiCvExtractionService:
         raise GeminiIntegrationError("Missing required Gemini setting: GEMINI_API_KEY")
 
     return GeminiCvExtractionService(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_gemini_job_search_service() -> GeminiJobSearchService:
+    """Build and cache the shared Gemini job-search service."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        raise GeminiIntegrationError("Missing required Gemini setting: GEMINI_API_KEY")
+
+    return GeminiJobSearchService(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
     )

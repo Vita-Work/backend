@@ -9,6 +9,7 @@ from src.logger import configure_logging, get_logger
 from src.middleware import RequestContextMiddleware
 from src.modules.extraction.routes import router as extraction_router
 from src.modules.onboarding.routes import router as onboarding_router
+from src.modules.search_jobs.routes import router as search_jobs_router
 from src.modules.users.routes import router as users_router
 from src.workflows.search_setup.runtime import (
     start_search_setup_runtime,
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(users_router)
     app.include_router(extraction_router)
     app.include_router(onboarding_router)
+    app.include_router(search_jobs_router)
 
     return app
 
