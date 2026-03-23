@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     dspy_model: str | None = None
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
+    indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
     search_job_site_agent_max_iterations: int = 15
     search_job_listing_max_pages: int = 2
     search_job_listing_max_items: int = 12
