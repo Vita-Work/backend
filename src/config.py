@@ -40,16 +40,13 @@ class Settings(BaseSettings):
     gemini_api_version: str = "v1alpha"
     gemini_request_timeout_seconds: int = 180
     gemini_max_retries: int = 2
-    search_job_site_agent_timeout_seconds: int = 120
     dspy_model: str | None = None
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
     indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
     search_job_plan_max_queries: int = 5
-    search_job_site_agent_max_iterations: int = 15
     search_job_listing_max_pages: int = 2
     search_job_listing_max_items: int = 12
-    search_job_site_max_selected_jobs: int = 8
     search_job_detail_max_jobs: int = 24
     search_job_unified_max_jobs: int = 100
     search_job_unified_batch_size: int = 10

@@ -107,7 +107,26 @@ def test_process_cv_extraction_workflow_persists_result(monkeypatch: pytest.Monk
         "OnboardingSessionsRepository",
         FakeOnboardingRepository,
     )
-    monkeypatch.setattr(extraction_job_module, "get_search_setup_graph", lambda: FakeGraph())
+    fake_graph = FakeGraph()
+
+    async def fake_invoke_search_setup_graph(*, graph_input, config, durability="sync"):
+        assert durability == "sync"
+        return await fake_graph.ainvoke(graph_input, config)
+
+    async def fake_get_search_setup_state(config):
+        return await fake_graph.aget_state(config)
+
+    monkeypatch.setattr(extraction_job_module, "get_search_setup_graph", lambda: object())
+    monkeypatch.setattr(
+        extraction_job_module,
+        "invoke_search_setup_graph",
+        fake_invoke_search_setup_graph,
+    )
+    monkeypatch.setattr(
+        extraction_job_module,
+        "get_search_setup_state",
+        fake_get_search_setup_state,
+    )
 
     asyncio.run(
         extraction_job_module.process_cv_extraction_workflow.__wrapped__.__wrapped__(  # type: ignore[attr-defined]

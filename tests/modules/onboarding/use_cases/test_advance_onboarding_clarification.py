@@ -69,14 +69,18 @@ def test_advance_onboarding_flow_starts_and_sets_pending_question(monkeypatch) -
 
     monkeypatch.setattr(flow_module, "OnboardingSessionsRepository", FakeRepository)
 
-    async def fake_get_graph():
-        return FakeGraph()
+    fake_graph = FakeGraph()
 
-    monkeypatch.setattr(
-        flow_module,
-        "get_search_setup_graph",
-        fake_get_graph,
-    )
+    async def fake_invoke_search_setup_graph(*, graph_input, config, durability="sync"):
+        assert durability == "sync"
+        return await fake_graph.ainvoke(graph_input, config)
+
+    async def fake_get_search_setup_state(config):
+        return await fake_graph.aget_state(config)
+
+    monkeypatch.setattr(flow_module, "get_search_setup_graph", lambda: object())
+    monkeypatch.setattr(flow_module, "invoke_search_setup_graph", fake_invoke_search_setup_graph)
+    monkeypatch.setattr(flow_module, "get_search_setup_state", fake_get_search_setup_state)
 
     result = asyncio.run(
         flow_module.advance_onboarding_flow(
@@ -155,14 +159,18 @@ def test_advance_onboarding_flow_resumes_and_completes(monkeypatch) -> None:
 
     monkeypatch.setattr(flow_module, "OnboardingSessionsRepository", FakeRepository)
 
-    async def fake_get_graph():
-        return FakeGraph()
+    fake_graph = FakeGraph()
 
-    monkeypatch.setattr(
-        flow_module,
-        "get_search_setup_graph",
-        fake_get_graph,
-    )
+    async def fake_invoke_search_setup_graph(*, graph_input, config, durability="sync"):
+        assert durability == "sync"
+        return await fake_graph.ainvoke(graph_input, config)
+
+    async def fake_get_search_setup_state(config):
+        return await fake_graph.aget_state(config)
+
+    monkeypatch.setattr(flow_module, "get_search_setup_graph", lambda: object())
+    monkeypatch.setattr(flow_module, "invoke_search_setup_graph", fake_invoke_search_setup_graph)
+    monkeypatch.setattr(flow_module, "get_search_setup_state", fake_get_search_setup_state)
 
     result = asyncio.run(
         flow_module.advance_onboarding_flow(
