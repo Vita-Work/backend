@@ -30,6 +30,7 @@ async def search_plan_node(state: SearchSetupState) -> dict[str, object]:
         "search_strategy_summary": result.search_strategy_summary,
         "soft_preferences": result.soft_preferences,
         "hard_preferences": result.hard_preferences,
+        "confirmation_context": "plan_confirmation",
         "status": "awaiting_confirmation",
     }
 

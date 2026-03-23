@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from langgraph.types import interrupt
 
 from src.config import get_settings
@@ -44,6 +46,17 @@ async def clarification_node(state: SearchSetupState) -> dict[str, object]:
     if decision.needs_more_context and not question:
         raise ValueError("Clarification requested more context but did not provide a question.")
 
+    cycle_turns = turns[cycle_start_index:]
+    if decision.needs_more_context and _question_was_already_answered(question, cycle_turns):
+        log.info("clarification_duplicate_question_detected")
+        return {
+            "pending_user_prompt": None,
+            "pending_user_prompt_type": None,
+            "missing_info": decision.missing_info,
+            "preference_hints": decision.preference_hints,
+            "status": "verifying",
+        }
+
     log.info(
         "clarification_decided",
         needs_more_context=decision.needs_more_context,
@@ -85,5 +98,56 @@ def need_more_context_node(state: SearchSetupState) -> dict[str, object]:
         "clarification_turns": turns,
         "pending_user_prompt": None,
         "pending_user_prompt_type": None,
+        "confirmation_context": None,
         "status": "verifying",
     }
+
+
+_QUESTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "can",
+    "could",
+    "do",
+    "for",
+    "how",
+    "i",
+    "in",
+    "is",
+    "me",
+    "my",
+    "now",
+    "of",
+    "on",
+    "or",
+    "please",
+    "should",
+    "the",
+    "to",
+    "we",
+    "what",
+    "where",
+    "which",
+    "who",
+    "would",
+    "you",
+    "your",
+}
+
+
+def _question_was_already_answered(question: str, turns: list[dict[str, str]]) -> bool:
+    fingerprint = _question_fingerprint(question)
+    if not fingerprint:
+        return False
+    return any(_question_fingerprint(turn.get("question", "")) == fingerprint for turn in turns)
+
+
+def _question_fingerprint(question: str) -> str:
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", question.lower())
+        if token not in _QUESTION_STOPWORDS
+    ]
+    return " ".join(sorted(set(tokens)))

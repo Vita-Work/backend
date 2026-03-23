@@ -193,3 +193,142 @@ def test_confirmation_rejection_reopens_one_corrective_clarification_round(
         "question": "Plan confirmation feedback",
         "answer": "no, please exclude industry roles entirely",
     }
+
+
+def test_clarification_node_skips_duplicate_question_in_current_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_decide_clarification(**kwargs):
+        return SimpleNamespace(
+            needs_more_context=True,
+            question="What seniority are you targeting now?",
+            missing_info=["seniority"],
+            preference_hints=["engineering"],
+        )
+
+    monkeypatch.setattr(
+        clarification_module,
+        "get_gemini_cv_extraction_service",
+        lambda: SimpleNamespace(decide_clarification=fake_decide_clarification),
+    )
+
+    result = asyncio.run(
+        clarification_module.clarification_node(
+            {
+                "user_id": "user-1",
+                "onboarding_session_id": "session-1",
+                "extracted_profile": "Senior engineer",
+                "missing_info": ["seniority"],
+                "preference_hints": [],
+                "clarification_turns": [
+                    {
+                        "question": "What seniority are you targeting?",
+                        "answer": "Junior",
+                    }
+                ],
+                "clarification_cycle_start_index": 0,
+                "clarification_max_rounds": 2,
+            }
+        )
+    )
+
+    assert result["pending_user_prompt"] is None
+    assert result["status"] == "verifying"
+
+
+def test_conflict_confirmation_moves_to_planning_without_reopening_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decisions = iter(
+        [
+            SimpleNamespace(
+                needs_more_context=True,
+                question="What seniority are you targeting now?",
+                missing_info=["seniority"],
+                preference_hints=["engineering"],
+            )
+        ]
+    )
+
+    class FakeGeminiService:
+        model = "gemini-test"
+
+        async def decide_clarification(self, **kwargs):
+            return next(decisions)
+
+    monkeypatch.setattr(
+        clarification_module,
+        "get_gemini_cv_extraction_service",
+        lambda: FakeGeminiService(),
+    )
+
+    class FakeDspyService:
+        async def verify_candidate_profile(self, **kwargs):
+            chat = kwargs["clarification_chat"]
+            if "Q: What seniority are you targeting?" not in chat:
+                return SimpleNamespace(
+                    verification_score=0.41,
+                    is_verified=False,
+                    verification_summary="Seniority is unclear.",
+                    remaining_gaps=["seniority"],
+                )
+            return SimpleNamespace(
+                verification_score=0.44,
+                is_verified=False,
+                verification_summary="Seniority still conflicts with the CV.",
+                remaining_gaps=["seniority"],
+            )
+
+        async def build_search_plan(self, **kwargs):
+            planning_context = kwargs["planning_context"]
+            assert "Conflict resolution feedback" in planning_context
+            return SimpleNamespace(
+                search_strategy_summary="Target junior backend roles.",
+                hard_preferences=["junior backend"],
+                soft_preferences=["mentorship"],
+            )
+
+    monkeypatch.setattr(
+        verify_module,
+        "get_dspy_search_setup_service",
+        lambda: FakeDspyService(),
+    )
+    monkeypatch.setattr(
+        search_plan_module,
+        "get_dspy_search_setup_service",
+        lambda: FakeDspyService(),
+    )
+
+    graph = build_search_setup_graph(checkpointer=InMemorySaver())
+    thread_id = str(uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    initial_state = {
+        "user_id": "user-1",
+        "onboarding_session_id": thread_id,
+        "extracted_profile": "Senior backend engineer",
+        "missing_info": ["seniority"],
+        "preference_hints": ["engineering"],
+        "clarification_turns": [
+            {"question": "What seniority are you targeting?", "answer": "Junior"}
+        ],
+        "clarification_cycle_start_index": 0,
+        "clarification_max_rounds": 1,
+        "verification_retry_count": 1,
+    }
+
+    first_result = asyncio.run(graph.ainvoke(initial_state, config))
+    assert first_result["status"] == "awaiting_confirmation"
+    assert first_result["__interrupt__"][0].value["type"] == "confirmation_request"
+    assert (
+        "latest explicit answer will be treated as the source of truth"
+        in first_result["__interrupt__"][0].value["prompt"]
+    )
+
+    second_result = asyncio.run(graph.ainvoke(Command(resume="No, final answer: junior"), config))
+    assert second_result["status"] == "awaiting_confirmation"
+    assert second_result["confirmation_context"] == "plan_confirmation"
+    assert second_result["hard_preferences"] == ["junior backend"]
+    assert second_result["clarification_turns"][-1] == {
+        "question": "Conflict resolution feedback",
+        "answer": "No, final answer: junior",
+    }

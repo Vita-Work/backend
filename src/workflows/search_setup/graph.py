@@ -36,6 +36,7 @@ def build_search_setup_graph(*, checkpointer=None):
         _route_after_verify,
         {
             "clarification": "clarification",
+            "confirm": "confirm",
             "search_plan": "search_plan",
         },
     )
@@ -45,6 +46,7 @@ def build_search_setup_graph(*, checkpointer=None):
         _route_after_confirm,
         {
             "clarification": "clarification",
+            "search_plan": "search_plan",
             END: END,
         },
     )
@@ -56,8 +58,14 @@ def _route_after_clarification(state: SearchSetupState):
 
 
 def _route_after_verify(state: SearchSetupState):
-    return "search_plan" if state.get("profile_verified") else "clarification"
+    if state.get("profile_verified"):
+        return "search_plan"
+    if state.get("confirmation_context") == "conflict_resolution":
+        return "confirm"
+    return "clarification"
 
 
 def _route_after_confirm(state: SearchSetupState):
+    if state.get("confirmation_context") == "conflict_resolution":
+        return "search_plan"
     return END if state.get("confirmed") else "clarification"

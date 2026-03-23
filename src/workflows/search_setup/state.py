@@ -6,6 +6,7 @@ from langgraph.graph.message import add_messages
 
 ExtractionStrategy = Literal["model_file", "local_text"]
 PromptType = Literal["clarification_question", "confirmation_request"]
+ConfirmationContext = Literal["plan_confirmation", "conflict_resolution"]
 WorkflowStatus = Literal[
     "ingesting",
     "extracting",
@@ -54,6 +55,7 @@ class SearchSetupState(TypedDict):
     clarification_cycle_start_index: NotRequired[int]
     pending_user_prompt: NotRequired[str | None]
     pending_user_prompt_type: NotRequired[PromptType | None]
+    confirmation_context: NotRequired[ConfirmationContext | None]
 
     verification_score: NotRequired[float]
     verification_summary: NotRequired[str]
