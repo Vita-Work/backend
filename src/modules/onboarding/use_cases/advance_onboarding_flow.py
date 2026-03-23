@@ -8,7 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
 from src.modules.onboarding.models import OnboardingSession
 from src.modules.onboarding.repository import OnboardingSessionsRepository
-from src.workflows.search_setup.runtime import get_search_setup_graph
+from src.workflows.search_setup.runtime import (
+    get_search_setup_graph,
+    get_search_setup_state,
+    invoke_search_setup_graph,
+)
 
 
 class ActiveOnboardingSessionNotFoundError(RuntimeError):
@@ -72,12 +76,16 @@ async def advance_onboarding_flow(
             "verification_retry_count": 0,
         }
 
+    config = {"configurable": {"thread_id": str(onboarding_session.id)}}
     graph = get_search_setup_graph()
     if inspect.isawaitable(graph):
-        graph = await graph
-    config = {"configurable": {"thread_id": str(onboarding_session.id)}}
-    result = await graph.ainvoke(graph_input, config, durability="sync")
-    snapshot = await graph.aget_state(config)
+        await graph
+    result = await invoke_search_setup_graph(
+        graph_input=graph_input,
+        config=config,
+        durability="sync",
+    )
+    snapshot = await get_search_setup_state(config)
     values = snapshot.values or {}
 
     _apply_graph_state_to_onboarding_session(
