@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from functools import lru_cache
 from pathlib import Path
 
@@ -243,6 +244,10 @@ class GeminiCvExtractionService:
             "Update missing_info to contain only the still-open factual gaps. "
             "Update preference_hints to reflect only evidence from the CV and clarification "
             "answers. "
+            "Do not repeat a question that has already been answered in the clarification "
+            "history, even if the answer conflicts with the CV. "
+            "When the user's latest explicit correction conflicts with the CV, treat the user's "
+            "latest explicit correction as more authoritative for future questions. "
             "Prefer questions about location, remote/on-site, employment type, salary "
             "expectations, "
             "notice period, visa/work authorization, target roles, industry preferences, and hard "
@@ -262,6 +267,9 @@ class GeminiJobSearchService:
     def __init__(self, *, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
+        settings = get_settings()
+        self.request_timeout_seconds = float(settings.gemini_request_timeout_seconds)
+        self.max_retries = settings.gemini_max_retries
 
     async def unify_jobs_batch(
         self,
@@ -272,6 +280,7 @@ class GeminiJobSearchService:
         batch_jobs: list[dict[str, object]],
     ) -> UnifiedJobsBatchResult:
         """Annotate one batch of shortlisted jobs with fit, reasons, and risks."""
+        sanitized_batch_jobs = [self._sanitize_batch_job(job) for job in batch_jobs]
         contents = [
             self._unification_prompt(),
             json.dumps(
@@ -279,22 +288,48 @@ class GeminiJobSearchService:
                     "search_strategy_summary": search_strategy_summary,
                     "hard_preferences": hard_preferences,
                     "soft_preferences": soft_preferences,
-                    "batch_jobs": batch_jobs,
+                    "batch_jobs": sanitized_batch_jobs,
                 },
                 ensure_ascii=False,
             ),
         ]
-        async with genai.Client(api_key=self.api_key).aio as client:
-            response = await client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_schema=UnifiedJobsBatchResult,
-                ),
-            )
+        response = await self._generate_with_retry(contents=contents)
         return self._parse_unified_jobs_batch_response(response=response)
+
+    async def _generate_with_retry(self, *, contents: list[str]) -> object:
+        attempts = self.max_retries + 1
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                async with genai.Client(api_key=self.api_key).aio as client:
+                    return await asyncio.wait_for(
+                        client.models.generate_content(
+                            model=self.model,
+                            contents=contents,
+                            config=types.GenerateContentConfig(
+                                temperature=0.1,
+                                response_mime_type="application/json",
+                                response_schema=UnifiedJobsBatchResult,
+                            ),
+                        ),
+                        timeout=self.request_timeout_seconds,
+                    )
+            except Exception as exc:
+                last_exc = exc
+                if not self._is_retryable_provider_error(exc) or attempt >= attempts:
+                    raise
+                delay_seconds = min(8.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.5))
+                logger.warning(
+                    "gemini_unification_retry_scheduled",
+                    retry_attempt=attempt,
+                    provider_timeout_detected=True,
+                    delay_seconds=round(delay_seconds, 2),
+                    model=self.model,
+                    error=str(exc),
+                )
+                await asyncio.sleep(delay_seconds)
+
+        raise GeminiIntegrationError(f"Gemini unified-jobs batch failed after retries: {last_exc}")
 
     def _parse_unified_jobs_batch_response(self, *, response) -> UnifiedJobsBatchResult:
         try:
@@ -310,6 +345,21 @@ class GeminiJobSearchService:
             ) from exc
 
         raise GeminiIntegrationError("Gemini returned an empty unified-jobs batch response.")
+
+    @staticmethod
+    def _is_retryable_provider_error(exc: Exception) -> bool:
+        message = str(exc).upper()
+        return any(
+            marker in message
+            for marker in (
+                "504",
+                "DEADLINE_EXCEEDED",
+                "SERVICE UNAVAILABLE",
+                "UNAVAILABLE",
+                "INTERNAL",
+                "TIMEOUT",
+            )
+        )
 
     @staticmethod
     def _unification_prompt() -> str:
@@ -328,6 +378,21 @@ class GeminiJobSearchService:
             "Do not invent facts not supported by the input. "
             "Keep notes short and use them only for batch-level caveats."
         )
+
+    @staticmethod
+    def _sanitize_batch_job(job: dict[str, object]) -> dict[str, object]:
+        sanitized = {key: value for key, value in job.items() if key != "raw_meta"}
+        for field_name in ("description", "company_about"):
+            value = sanitized.get(field_name)
+            if isinstance(value, str):
+                sanitized[field_name] = value[:4000]
+        company_contacts = sanitized.get("company_contacts")
+        if isinstance(company_contacts, list):
+            sanitized["company_contacts"] = company_contacts[:5]
+        skills = sanitized.get("skills")
+        if isinstance(skills, list):
+            sanitized["skills"] = skills[:20]
+        return sanitized
 
 
 @lru_cache(maxsize=1)

@@ -99,9 +99,7 @@ class FakeLoopingAgent:
             }
         )
         await self.tools["get_job_details"].ainvoke(
-            {
-                "job_urls": [f"https://mx.computrabajo.com/job-{index}" for index in range(1, 12)]
-            }
+            {"job_urls": [f"https://mx.computrabajo.com/job-{index}" for index in range(1, 12)]}
         )
         raise GraphRecursionError("loop")
 
@@ -122,9 +120,7 @@ class FakeTimeoutAgent:
             }
         )
         await self.tools["get_job_details"].ainvoke(
-            {
-                "job_urls": [f"https://mx.computrabajo.com/job-{index}" for index in range(1, 4)]
-            }
+            {"job_urls": [f"https://mx.computrabajo.com/job-{index}" for index in range(1, 4)]}
         )
         raise TimeoutError("agent timed out")
 

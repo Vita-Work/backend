@@ -75,7 +75,6 @@ class UnifiedJob(BaseModel):
     risks: list[str] = Field(default_factory=list)
     fit_level: Literal["low", "middle", "high"]
     source_queries: list[str] = Field(default_factory=list)
-    raw_meta: dict[str, object] = Field(default_factory=dict)
 
 
 class SiteAgentResult(BaseModel):

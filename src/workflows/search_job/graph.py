@@ -18,9 +18,11 @@ def build_search_job_graph():
     graph = StateGraph(SearchJobState)
     graph.add_node("dispatch_source_workers", dispatch_source_workers_node)
     graph.add_node("source_worker", source_worker_node)
-    graph.add_node("dispatch_unification", dispatch_unification_node)
+    # Join after all site workers finish before scheduling unification batches.
+    graph.add_node("dispatch_unification", dispatch_unification_node, defer=True)
     graph.add_node("unify_jobs_batch", unify_jobs_batch_node)
-    graph.add_node("finalize_search_results", finalize_search_results_node)
+    # Join after all unification batches finish before building the final report.
+    graph.add_node("finalize_search_results", finalize_search_results_node, defer=True)
 
     graph.add_edge(START, "dispatch_source_workers")
     graph.add_conditional_edges("dispatch_source_workers", _route_source_workers)
