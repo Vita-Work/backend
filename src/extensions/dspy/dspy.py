@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field, ValidationError
 from src.config import get_settings
 from src.extensions.gemini import GeminiIntegrationError
 from src.logger import get_logger
-from src.workflows.search_setup.signatures import (
-    SearchPlanSignature,
-    VerifyProfileSignature,
-)
+from src.workflows.search_job.schemas import SearchExecutionPlan
+from src.workflows.search_job.signatures.execution_plan import SearchJobExecutionPlanSignature
+from src.workflows.search_setup.signatures.search_plan import SearchPlanSignature
+from src.workflows.search_setup.signatures.verify_profile import VerifyProfileSignature
 
 logger = get_logger("integrations.dspy")
 
@@ -37,6 +37,10 @@ class SearchPlanResult(BaseModel):
     hard_preferences: list[str] = Field(default_factory=list)
 
 
+class SearchJobExecutionPlanResult(SearchExecutionPlan):
+    """Structured runtime execution plan for search_job."""
+
+
 class DspySearchSetupService:
     """Shared DSPy modules for verification and planning."""
 
@@ -48,6 +52,8 @@ class DspySearchSetupService:
         self.verify_profile.set_lm(self.lm)
         self.search_plan = dspy.ChainOfThought(SearchPlanSignature)
         self.search_plan.set_lm(self.lm)
+        self.search_job_plan = dspy.ChainOfThought(SearchJobExecutionPlanSignature)
+        self.search_job_plan.set_lm(self.lm)
 
     async def verify_candidate_profile(
         self,
@@ -101,6 +107,41 @@ class DspySearchSetupService:
             raise DspyIntegrationError("DSPy returned an invalid search-plan payload.") from exc
         except Exception as exc:
             raise DspyIntegrationError("DSPy search planning failed.") from exc
+
+    async def build_search_job_execution_plan(
+        self,
+        *,
+        search_strategy_summary: str,
+        hard_preferences: list[str],
+        soft_preferences: list[str],
+        available_sites: list[str],
+    ) -> SearchJobExecutionPlanResult:
+        """Build the runtime execution plan for one search-job run."""
+        try:
+            with dspy.settings.context(lm=self.lm):
+                prediction = await self.search_job_plan.acall(
+                    search_strategy_summary=search_strategy_summary,
+                    hard_preferences=hard_preferences,
+                    soft_preferences=soft_preferences,
+                    available_sites=available_sites,
+                )
+            return SearchJobExecutionPlanResult.model_validate(
+                {
+                    "queries": prediction.queries,
+                    "include_keywords": prediction.include_keywords,
+                    "exclude_keywords": prediction.exclude_keywords,
+                    "locations": prediction.locations,
+                    "remote_only": prediction.remote_only,
+                    "salary_from": prediction.salary_from,
+                    "seniority": prediction.seniority,
+                    "target_sites": prediction.target_sites,
+                    "notes": prediction.notes,
+                }
+            )
+        except ValidationError as exc:
+            raise DspyIntegrationError("DSPy returned an invalid search-job plan payload.") from exc
+        except Exception as exc:
+            raise DspyIntegrationError("DSPy search-job planning failed.") from exc
 
 
 @lru_cache(maxsize=1)

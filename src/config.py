@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     clarification_max_rounds: int = 5
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
     gemini_api_version: str = "v1alpha"
     gemini_request_timeout_seconds: int = 180
     gemini_max_retries: int = 2
@@ -44,12 +45,18 @@ class Settings(BaseSettings):
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
     indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
+    search_job_plan_max_queries: int = 5
     search_job_site_agent_max_iterations: int = 15
     search_job_listing_max_pages: int = 2
     search_job_listing_max_items: int = 12
     search_job_site_max_selected_jobs: int = 8
+    search_job_detail_max_jobs: int = 24
     search_job_unified_max_jobs: int = 100
     search_job_unified_batch_size: int = 10
+    search_job_listing_embedding_similarity_threshold: float = 0.95
+    search_job_detail_embedding_similarity_threshold: float = 0.93
+    search_job_embedding_output_dimensionality: int = 128
+    search_job_embedding_top_k: int = 5
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

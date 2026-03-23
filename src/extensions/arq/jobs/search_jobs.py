@@ -47,12 +47,14 @@ async def process_search_job_workflow(
                 "soft_preferences": workflow_run.soft_preferences or [],
                 "source_sites": workflow_run.source_sites or [],
                 "site_results": [],
+                "listing_candidates": [],
+                "detailed_jobs": [],
                 "unified_jobs": [],
                 "batch_notes": [],
             }
         )
         final_jobs = result.get("final_jobs", [])
-        site_results = result.get("site_results", [])
+        site_results = result.get("final_site_results", result.get("site_results", []))
         batch_notes = result.get("batch_notes", [])
     except Exception as exc:
         workflow_run.status = "failed"

@@ -242,6 +242,75 @@ class JobSiteToolsService:
         )
         return details
 
+    async def get_job_details_from_listings(
+        self,
+        *,
+        listings: list[SiteJobListing],
+    ) -> list[SiteJobDetail]:
+        parser = get_parser(self.site_name)
+        details: list[SiteJobDetail] = []
+        requested_listings = listings[:15]
+
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds,
+            follow_redirects=True,
+        ) as client:
+            for listing in requested_listings:
+                job_url = self._canonical_job_url(listing.job_url)
+                seed = self._seed_cache.get(job_url) or VacancySeed(
+                    job_url=job_url,
+                    title=listing.title,
+                    company_name=listing.company_name,
+                    company_url=listing.company_url,
+                    published_at=listing.published_at,
+                    salary_text=listing.salary_text,
+                    location=listing.location,
+                )
+
+                errors: list[ScrapeError] = []
+                detail_html = await parser.fetch_page_text(
+                    client,
+                    job_url,
+                    stage="detail",
+                    errors=errors,
+                )
+                if detail_html is None:
+                    fallback_record = parser.build_fallback_record(seed)
+                    if fallback_record is not None:
+                        details.append(self._detail_from_record(fallback_record))
+                    continue
+
+                try:
+                    detail = parser.parse_job_detail_page(detail_html, job_url, seed)
+                except Exception as exc:
+                    logger.error(
+                        "job_site_detail_parse_failed",
+                        site=self.site_name,
+                        job_url=job_url,
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    fallback_record = parser.build_fallback_record(seed)
+                    if fallback_record is not None:
+                        details.append(self._detail_from_record(fallback_record))
+                    continue
+
+                company = await self._load_company_detail(
+                    client=client,
+                    parser=parser,
+                    detail=detail,
+                    seed=seed,
+                )
+                record = parser._build_record(seed=seed, detail=detail, company=company)
+                details.append(self._detail_from_record(record))
+
+        logger.info(
+            "job_site_details_collected_from_listings",
+            site=self.site_name,
+            details_count=len(details),
+        )
+        return details
+
     async def _load_company_detail(
         self,
         *,
