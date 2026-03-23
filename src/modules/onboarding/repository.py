@@ -39,6 +39,19 @@ class OnboardingSessionsRepository:
         """Fetch an onboarding session by identifier."""
         return await self.session.get(OnboardingSession, onboarding_session_id)
 
+    async def get_latest_completed_for_user(self, *, user_id: str) -> OnboardingSession | None:
+        """Return the latest completed onboarding session for a user."""
+        result = await self.session.execute(
+            select(OnboardingSession)
+            .where(
+                OnboardingSession.user_id == user_id,
+                OnboardingSession.status == "completed",
+            )
+            .order_by(desc(OnboardingSession.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     def add(
         self,
         *,

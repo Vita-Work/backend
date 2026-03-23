@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     redis_password: str | None = None
     arq_max_jobs: int = 50
     arq_max_tries: int = 1
-    arq_job_timeout: int = 300
+    arq_job_timeout: int = 600
     arq_keep_result: int = 3600
     s3_endpoint_url: str | None = None
     s3_region: str = "auto"
@@ -37,10 +37,18 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
     gemini_api_version: str = "v1alpha"
+    gemini_request_timeout_seconds: int = 180
+    gemini_max_retries: int = 2
+    search_job_site_agent_timeout_seconds: int = 120
     dspy_model: str | None = None
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
-    indeed_playwright_mode: Literal["headless", "headed", "auto"] = "auto"
+    search_job_site_agent_max_iterations: int = 15
+    search_job_listing_max_pages: int = 2
+    search_job_listing_max_items: int = 12
+    search_job_site_max_selected_jobs: int = 8
+    search_job_unified_max_jobs: int = 100
+    search_job_unified_batch_size: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

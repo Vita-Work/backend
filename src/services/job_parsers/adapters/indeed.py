@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, urldefrag, urlencode, urljoin, urlsplit, urlu
 
 import httpx
 from lxml import html
+from scrapling.fetchers import FetcherSession
 
-from src.config import get_settings
 from src.logger import get_logger
 from src.services.job_parsers.base import BaseJobParser
 from src.services.job_parsers.registry import register_parser
@@ -17,6 +17,7 @@ from src.services.job_parsers.schemas import (
     CompanyDetail,
     ListingPageResult,
     ScrapeError,
+    ScrapeRunResult,
     SearchIntent,
     VacancyDetail,
     VacancySeed,
@@ -42,13 +43,20 @@ _CHALLENGE_MARKERS = (
 )
 
 logger = get_logger("services.job_parsers.indeed")
+_INDEED_SESSION_PROFILES = (["chrome"], ["safari"])
+_SUSPICIOUS_TITLES = (
+    "security check - indeed.com",
+    "additional verification required",
+    "access denied",
+)
 
 
 @register_parser("indeed")
 class IndeedParser(BaseJobParser):
     def __init__(self) -> None:
-        self._playwright_lock = asyncio.Lock()
-        self._playwright_runtime: dict[str, Any] | None = None
+        self._session_lock = asyncio.Lock()
+        self._fetcher_session: FetcherSession | None = None
+        self._active_profile: list[str] | None = None
 
     def site_code(self) -> str:
         return "indeed"
@@ -58,6 +66,25 @@ class IndeedParser(BaseJobParser):
 
     def build_request_headers(self, stage: str) -> dict[str, str]:
         return _BROWSER_HEADERS
+
+    async def scrape_by_intent(
+        self,
+        intent: SearchIntent,
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout_seconds: float = 20.0,
+        max_pages_safety: int = 100,
+    ) -> ScrapeRunResult:
+        try:
+            return await super().scrape_by_intent(
+                intent,
+                client=client,
+                timeout_seconds=timeout_seconds,
+                max_pages_safety=max_pages_safety,
+            )
+        finally:
+            async with self._session_lock:
+                await self._reset_fetcher_session()
 
     def build_search_urls(self, intent: SearchIntent) -> list[str]:
         locations = intent.locations[:]
@@ -94,73 +121,41 @@ class IndeedParser(BaseJobParser):
         stage: str,
         errors: list[ScrapeError],
     ) -> str | None:
-        headers = self.build_request_headers(stage)
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            content = response.text
+        del client
 
-            if stage == "listing" and _has_listing_results(content):
-                return content
-
-            if _looks_like_challenge(content, stage=stage):
-                logger.info(
-                    "browser_fallback_used",
+        async with self._session_lock:
+            try:
+                if stage == "listing":
+                    result = await self._fetch_listing_text(url)
+                else:
+                    result = await self._fetch_non_listing_text(url, stage=stage)
+            except Exception as exc:
+                errors.append(ScrapeError(stage=stage, url=url, message=str(exc)))
+                logger.error(
+                    "scrapling_fetch_failed",
                     site=self.site_code(),
                     stage=stage,
                     url=url,
-                    reason="challenge_html_detected",
+                    error=str(exc),
                 )
-                fallback_content = await self._fetch_with_playwright(
-                    url, stage=stage, errors=errors
-                )
-                if fallback_content is not None:
-                    return fallback_content
-                errors.append(
-                    ScrapeError(
-                        stage=stage,
-                        url=url,
-                        message="challenge_detected_and_playwright_fetch_failed",
-                    )
-                )
+                await self._reset_fetcher_session()
                 return None
 
-            return content
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code if exc.response is not None else None
-            if status_code in {403, 429, 503}:
-                logger.info(
-                    "browser_fallback_used",
-                    site=self.site_code(),
-                    stage=stage,
-                    url=url,
-                    reason=f"http_status_{status_code}",
-                )
-                fallback_content = await self._fetch_with_playwright(
-                    url, stage=stage, errors=errors
-                )
-                if fallback_content is not None:
-                    return fallback_content
+        if result["html_text"] is None:
+            message = result["error"] or "scrapling_fetch_failed"
+            errors.append(ScrapeError(stage=stage, url=url, message=message))
+            logger.error(
+                "scrapling_fetch_failed",
+                site=self.site_code(),
+                stage=stage,
+                url=url,
+                error=message,
+                profile=result.get("profile"),
+                transport="scrapling_fetcher_session",
+            )
+            return None
 
-            errors.append(ScrapeError(stage=stage, url=url, message=str(exc)))
-            logger.error(
-                "http_request_failed",
-                site=self.site_code(),
-                stage=stage,
-                url=url,
-                error=str(exc),
-            )
-            return None
-        except Exception as exc:
-            errors.append(ScrapeError(stage=stage, url=url, message=str(exc)))
-            logger.error(
-                "http_request_failed",
-                site=self.site_code(),
-                stage=stage,
-                url=url,
-                error=str(exc),
-            )
-            return None
+        return result["html_text"]
 
     def parse_listing_page(self, html_text: str, page_url: str) -> ListingPageResult:
         tree = html.fromstring(html_text)
@@ -359,150 +354,183 @@ class IndeedParser(BaseJobParser):
             raw_meta={"source": "company_dom"},
         )
 
-    async def _fetch_with_playwright(
-        self,
-        url: str,
-        *,
-        stage: str,
-        errors: list[ScrapeError],
-    ) -> str | None:
-        launch_modes = _resolve_playwright_launch_modes()
-        last_error: str | None = None
+    async def _fetch_listing_text(self, url: str) -> dict[str, Any]:
+        last_result: dict[str, Any] | None = None
+        for profile in _INDEED_SESSION_PROFILES:
+            await self._ensure_fetcher_session(profile)
+            result = await self._fetch_with_active_session(url, stage="listing")
+            last_result = result
+            if self._is_usable_listing_response(result["html_text"], result["status"]):
+                self._active_profile = profile[:]
+                return result
 
-        async with self._playwright_lock:
-            for headless in launch_modes:
-                page = None
-                try:
-                    context = await self._ensure_playwright_context(headless=headless)
-                    page = await context.new_page()
+            logger.info(
+                "scrapling_listing_retry",
+                site=self.site_code(),
+                stage="listing",
+                url=url,
+                profile=profile,
+                status=result["status"],
+                reason=result["reason"],
+                transport="scrapling_fetcher_session",
+            )
+            await self._reset_fetcher_session()
 
-                    if stage == "listing" and "/jobs?" in url:
-                        await _run_listing_flow(page, url)
-                    else:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                        await page.wait_for_timeout(1500)
+        if last_result is None:
+            return {
+                "html_text": None,
+                "status": None,
+                "profile": None,
+                "reason": "listing_fetch_failed",
+                "error": "listing_fetch_failed",
+            }
 
-                    content = await page.content()
-                except Exception as exc:
-                    last_error = f"playwright_fetch_failed_headless_{headless}: {exc}"
-                    logger.warning(
-                        "playwright_fetch_retry",
-                        site=self.site_code(),
-                        stage=stage,
-                        url=url,
-                        headless=headless,
-                        error=str(exc),
-                    )
-                    await self._reset_playwright_runtime()
-                    continue
-                finally:
-                    if page is not None:
-                        try:
-                            await page.close()
-                        except Exception:
-                            pass
+        return {
+            **last_result,
+            "html_text": None,
+            "error": last_result["reason"],
+        }
 
-                if stage == "listing" and _has_listing_results(content):
-                    return content
-                if not _looks_like_challenge(content, stage=stage):
-                    return content
+    async def _fetch_non_listing_text(self, url: str, *, stage: str) -> dict[str, Any]:
+        profile = self._active_profile[:] if self._active_profile is not None else ["chrome"]
+        await self._ensure_fetcher_session(profile)
+        result = await self._fetch_with_active_session(url, stage=stage)
 
-                last_error = f"playwright_loaded_challenge_page_headless_{headless}"
-                await self._reset_playwright_runtime()
+        if result["html_text"] is None:
+            await self._reset_fetcher_session()
+            return result
 
-        errors.append(
-            ScrapeError(
+        if stage in {"detail", "company"} and (
+            result["status"] is None
+            or result["status"] >= 400
+            or _looks_like_challenge(result["html_text"], stage=stage)
+            or _has_suspicious_indeed_title(result["html_text"])
+        ):
+            message = f"{stage}_unusable_page"
+            logger.info(
+                "scrapling_unusable_page",
+                site=self.site_code(),
                 stage=stage,
                 url=url,
-                message=last_error or "playwright_loaded_challenge_page",
+                profile=profile,
+                reason=message,
+                transport="scrapling_fetcher_session",
             )
-        )
-        logger.error(
-            "playwright_fetch_failed",
+            return {
+                **result,
+                "html_text": None,
+                "reason": message,
+                "error": message,
+            }
+
+        return result
+
+    async def _ensure_fetcher_session(self, profile: list[str]) -> None:
+        if self._fetcher_session is not None and self._active_profile == profile:
+            return
+
+        await self._reset_fetcher_session()
+
+        session_manager = FetcherSession(impersonate=profile)
+        session = await asyncio.to_thread(session_manager.__enter__)
+        self._fetcher_session = session
+        self._active_profile = profile[:]
+
+    async def _reset_fetcher_session(self) -> None:
+        session = self._fetcher_session
+        active_profile = self._active_profile
+        self._fetcher_session = None
+        self._active_profile = None
+        if session is None:
+            return
+
+        try:
+            await asyncio.to_thread(session.__exit__, None, None, None)
+        except Exception as exc:
+            logger.warning(
+                "scrapling_session_close_failed",
+                site=self.site_code(),
+                profile=active_profile,
+                error=str(exc),
+            )
+
+    async def _fetch_with_active_session(self, url: str, *, stage: str) -> dict[str, Any]:
+        if self._fetcher_session is None:
+            raise RuntimeError("fetcher_session_not_initialized")
+
+        started = asyncio.get_running_loop().time()
+        try:
+            response = await asyncio.to_thread(
+                self._fetcher_session.get,
+                url,
+                stealthy_headers=True,
+                timeout=30_000,
+            )
+        except Exception as exc:
+            return {
+                "html_text": None,
+                "status": None,
+                "profile": self._active_profile[:] if self._active_profile else None,
+                "reason": "session_get_failed",
+                "error": str(exc),
+            }
+
+        html_text = response.html_content or response.body.decode("utf-8", errors="replace")
+        status = getattr(response, "status", None)
+        duration_seconds = round(asyncio.get_running_loop().time() - started, 3)
+        reason = self._classify_fetch_result(html_text, status, stage=stage)
+        logger.info(
+            "scrapling_fetch_completed",
             site=self.site_code(),
             stage=stage,
             url=url,
-            error=last_error or "playwright_loaded_challenge_page",
+            status=status,
+            profile=self._active_profile,
+            reason=reason,
+            duration_seconds=duration_seconds,
+            transport="scrapling_fetcher_session",
         )
-        return None
-
-    async def _ensure_playwright_context(self, *, headless: bool) -> Any:
-        runtime = self._playwright_runtime
-        current_loop = asyncio.get_running_loop()
-        if (
-            runtime is not None
-            and runtime.get("headless") == headless
-            and runtime.get("loop") is current_loop
-        ):
-            return runtime["context"]
-
-        await self._reset_playwright_runtime()
-
-        try:
-            from playwright.async_api import async_playwright
-        except Exception as exc:
-            raise RuntimeError(f"playwright_import_failed: {exc}") from exc
-
-        playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(
-            channel="chromium",
-            headless=headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent=_BROWSER_HEADERS["User-Agent"],
-            locale="en-US",
-            viewport={"width": 1366, "height": 900},
-            extra_http_headers={"Accept-Language": _BROWSER_HEADERS["Accept-Language"]},
-        )
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
-        page = await context.new_page()
-        try:
-            await page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1200)
-        finally:
-            await page.close()
-
-        self._playwright_runtime = {
-            "loop": current_loop,
-            "headless": headless,
-            "playwright": playwright,
-            "browser": browser,
-            "context": context,
+        return {
+            "html_text": html_text,
+            "status": status,
+            "profile": self._active_profile[:] if self._active_profile else None,
+            "reason": reason,
+            "error": None,
         }
-        return context
 
-    async def _reset_playwright_runtime(self) -> None:
-        runtime = self._playwright_runtime
-        self._playwright_runtime = None
-        if runtime is None:
-            return
+    def _is_usable_listing_response(self, html_text: str | None, status: int | None) -> bool:
+        if not html_text or status is None or status >= 400:
+            return False
+        if _looks_like_challenge(html_text, stage="listing"):
+            return False
+        if _has_suspicious_indeed_title(html_text):
+            return False
+        listing = self.parse_listing_page(html_text, "")
+        return bool(listing.vacancies)
 
-        context = runtime.get("context")
-        browser = runtime.get("browser")
-        playwright = runtime.get("playwright")
-
-        if context is not None:
+    def _classify_fetch_result(
+        self,
+        html_text: str | None,
+        status: int | None,
+        *,
+        stage: str,
+    ) -> str:
+        if html_text is None:
+            return "empty_html"
+        if status is not None and status >= 400:
+            return f"http_status_{status}"
+        if _looks_like_challenge(html_text, stage=stage):
+            return "challenge_detected"
+        if stage == "listing":
+            if _has_suspicious_indeed_title(html_text):
+                return "suspicious_title"
             try:
-                await context.close()
+                listing = self.parse_listing_page(html_text, "")
             except Exception:
-                pass
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-        if playwright is not None:
-            try:
-                await playwright.stop()
-            except Exception:
-                pass
+                return "listing_parse_failed"
+            if not listing.vacancies:
+                return "listing_empty_after_fetch"
+        return "ok"
 
 
 def _looks_like_challenge(content: str, *, stage: str) -> bool:
@@ -513,6 +541,10 @@ def _looks_like_challenge(content: str, *, stage: str) -> bool:
     if "<title>just a moment..." in lowered:
         return True
     if "checking your browser before accessing" in lowered:
+        return True
+    if "security check - indeed.com" in lowered:
+        return True
+    if "additional verification required" in lowered:
         return True
     if "cf-challenge" in lowered:
         return True
@@ -545,13 +577,13 @@ def _has_useful_indeed_content(content: str, *, stage: str) -> bool:
     return _has_listing_results(content) or "job post details" in lowered
 
 
-def _resolve_playwright_launch_modes() -> list[bool]:
-    mode = get_settings().indeed_playwright_mode
-    if mode == "headless":
-        return [True]
-    if mode == "headed":
-        return [False]
-    return [True, False]
+def _has_suspicious_indeed_title(content: str) -> bool:
+    lowered = content.lower()
+    match = re.search(r"<title>(.*?)</title>", lowered, flags=re.DOTALL)
+    if match is None:
+        return False
+    title = _clean_text(match.group(1))
+    return any(marker in title for marker in _SUSPICIOUS_TITLES)
 
 
 def _normalize_company_name(value: str | None) -> str | None:
@@ -596,67 +628,6 @@ def _normalize_listing_url(url: str | None) -> str | None:
             "",
         )
     )
-
-
-async def _run_listing_flow(page: Any, url: str) -> None:
-    parsed = urlsplit(url)
-    query = parse_qs(parsed.query)
-    keyword = query.get("q", [""])[0]
-    location = query.get("l", [""])[0]
-    sort = query.get("sort", [""])[0]
-
-    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_timeout(1500)
-    if await _page_has_listing_results(page):
-        return
-
-    await page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_timeout(1200)
-
-    what_input = page.locator('input[name="q"]').first
-    await what_input.click()
-    await what_input.fill(keyword)
-
-    where_input = page.locator('input[name="l"]').first
-    if await where_input.count() > 0:
-        await where_input.click()
-        await where_input.fill(location)
-
-    await what_input.press("Enter")
-    await page.wait_for_timeout(1500)
-
-    if "/jobs" not in page.url:
-        try:
-            await page.locator('button:has-text("Search")').first.click()
-            await page.wait_for_timeout(1500)
-        except Exception:
-            pass
-
-    if "/jobs" not in page.url:
-        params = {"q": keyword, "l": location}
-        if sort:
-            params["sort"] = sort
-        direct_url = f"{BASE_URL}/jobs?{urlencode(params)}"
-        await page.goto(direct_url, wait_until="domcontentloaded", timeout=60000)
-
-    try:
-        await page.wait_for_selector(
-            'a.jcs-JobTitle, a[aria-label="Next Page"], [id^="job_"], [id^="sj_"]',
-            timeout=12000,
-        )
-    except Exception:
-        await page.wait_for_timeout(2500)
-
-
-async def _page_has_listing_results(page: Any) -> bool:
-    try:
-        await page.wait_for_selector(
-            'a.jcs-JobTitle, a[aria-label="Next Page"], [id^="job_"], [id^="sj_"]',
-            timeout=8000,
-        )
-        return True
-    except Exception:
-        return False
 
 
 def _extract_job_posting_from_jsonld(html_text: str) -> dict[str, Any] | None:

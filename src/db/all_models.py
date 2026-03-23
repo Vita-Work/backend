@@ -5,6 +5,7 @@ Import this module explicitly when needed, but avoid importing it during normal 
 
 from src.modules.extraction.models import ExtractionWorkflowRun
 from src.modules.onboarding.models import OnboardingSession
+from src.modules.search_jobs.models import SearchJobWorkflowRun
 from src.modules.users.models import User
 
-__all__ = ["ExtractionWorkflowRun", "OnboardingSession", "User"]
+__all__ = ["ExtractionWorkflowRun", "OnboardingSession", "SearchJobWorkflowRun", "User"]
