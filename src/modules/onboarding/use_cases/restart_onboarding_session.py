@@ -11,9 +11,9 @@ async def restart_onboarding_session(
 ) -> OnboardingSession:
     """Supersede the current active onboarding session and create a fresh draft session."""
     repository = OnboardingSessionsRepository(session=session)
-    active_session = await repository.get_active_for_user(user_id=user_id)
+    active_sessions = await repository.list_active_for_user(user_id=user_id)
 
-    if active_session is not None:
+    for active_session in active_sessions:
         active_session.status = "superseded"
         active_session.pending_user_prompt = None
         active_session.pending_user_prompt_type = None
@@ -26,7 +26,7 @@ async def restart_onboarding_session(
     )
     await session.flush()
 
-    if active_session is not None:
+    for active_session in active_sessions:
         active_session.superseded_by_session_id = new_session.id
 
     await session.commit()

@@ -35,6 +35,18 @@ class OnboardingSessionsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_active_for_user(self, *, user_id: str) -> list[OnboardingSession]:
+        """Return all active onboarding sessions for a user, newest first."""
+        result = await self.session.execute(
+            select(OnboardingSession)
+            .where(
+                OnboardingSession.user_id == user_id,
+                OnboardingSession.status.in_(ACTIVE_ONBOARDING_STATUSES),
+            )
+            .order_by(desc(OnboardingSession.created_at))
+        )
+        return list(result.scalars().all())
+
     async def get_by_id(self, *, onboarding_session_id: UUID) -> OnboardingSession | None:
         """Fetch an onboarding session by identifier."""
         return await self.session.get(OnboardingSession, onboarding_session_id)
