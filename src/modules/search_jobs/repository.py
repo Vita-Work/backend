@@ -16,6 +16,13 @@ class SearchJobWorkflowRunsRepository:
         """Fetch a search-job workflow run by identifier."""
         return await self.session.get(SearchJobWorkflowRun, workflow_run_id)
 
+    async def list_all(self) -> list[SearchJobWorkflowRun]:
+        """Return search-job workflow runs ordered by newest first."""
+        result = await self.session.execute(
+            select(SearchJobWorkflowRun).order_by(desc(SearchJobWorkflowRun.created_at))
+        )
+        return list(result.scalars().all())
+
     async def get_latest_for_onboarding_session(
         self,
         *,

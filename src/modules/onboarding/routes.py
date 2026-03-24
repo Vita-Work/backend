@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
+from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.onboarding.schemas import (
     OnboardingSessionResponse,
     SubmitOnboardingAnswerRequest,
@@ -28,11 +29,13 @@ from src.modules.search_jobs.use_cases.queue_search_job_workflow import (
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 db_session_dependency = Depends(get_db_session)
 arq_redis_dependency = Depends(get_arq_redis)
+admin_dependency = Depends(require_admin)
 
 
 @router.get("/users/{user_id}/active", response_model=OnboardingSessionResponse)
 async def get_active_onboarding_session_route(
     user_id: str,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
     """Return the active onboarding session for a user."""
@@ -56,6 +59,7 @@ async def get_active_onboarding_session_route(
 )
 async def restart_onboarding_session_route(
     user_id: str,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
     """Supersede the current onboarding flow and create a fresh draft session."""
@@ -66,12 +70,11 @@ async def restart_onboarding_session_route(
     return OnboardingSessionResponse.model_validate(onboarding_session)
 
 
-@router.post("/users/{user_id}/clarification", response_model=OnboardingSessionResponse)
-async def start_or_get_clarification_route(
+async def _advance_onboarding_flow(
     user_id: str,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
-    """Start clarification for the active onboarding or return the current pending question."""
+    """Advance onboarding until the next prompt or completion."""
     try:
         onboarding_session = await advance_onboarding_flow(
             session=session,
@@ -91,14 +94,13 @@ async def start_or_get_clarification_route(
     return OnboardingSessionResponse.model_validate(onboarding_session)
 
 
-@router.post("/users/{user_id}/clarification/answer", response_model=OnboardingSessionResponse)
-async def submit_clarification_answer_route(
+async def _resume_onboarding_flow(
     user_id: str,
     payload: SubmitOnboardingAnswerRequest,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingSessionResponse:
-    """Resume clarification with the user's latest answer."""
+    """Resume onboarding with the user's latest answer."""
     try:
         onboarding_session = await advance_onboarding_flow(
             session=session,
@@ -134,21 +136,23 @@ async def submit_clarification_answer_route(
 @router.post("/users/{user_id}/run", response_model=OnboardingSessionResponse)
 async def run_onboarding_flow_route(
     user_id: str,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
     """Advance the active onboarding flow until the next human prompt or completion."""
-    return await start_or_get_clarification_route(user_id=user_id, session=session)
+    return await _advance_onboarding_flow(user_id=user_id, session=session)
 
 
 @router.post("/users/{user_id}/respond", response_model=OnboardingSessionResponse)
 async def respond_to_onboarding_prompt_route(
     user_id: str,
     payload: SubmitOnboardingAnswerRequest,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingSessionResponse:
     """Resume the active onboarding flow with the user's latest answer."""
-    return await submit_clarification_answer_route(
+    return await _resume_onboarding_flow(
         user_id=user_id,
         payload=payload,
         session=session,

@@ -4,13 +4,15 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import get_settings
-from src.db.engine import check_database_connection
+from src.db.engine import check_database_connection, get_db_context
 from src.logger import configure_logging, get_logger
 from src.middleware import RequestContextMiddleware
-from src.modules.extraction.routes import router as extraction_router
-from src.modules.onboarding.routes import router as onboarding_router
-from src.modules.search_jobs.routes import router as search_jobs_router
-from src.modules.users.routes import router as users_router
+from src.modules.admin.routes import router as admin_router
+from src.modules.auth.bootstrap import bootstrap_admin_users
+from src.modules.auth.routes import router as auth_router
+from src.modules.job_tracker.admin_routes import router as job_tracker_admin_router
+from src.modules.job_tracker.me_routes import router as job_tracker_me_router
+from src.modules.me.routes import router as me_router
 from src.workflows.search_setup.runtime import (
     start_search_setup_runtime,
     stop_search_setup_runtime,
@@ -36,6 +38,8 @@ async def lifespan(app: FastAPI):
         environment=settings.environment,
     )
     await start_search_setup_runtime()
+    async with get_db_context() as session:
+        await bootstrap_admin_users(session=session)
     try:
         yield
     finally:
@@ -59,7 +63,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -89,10 +96,11 @@ def create_app() -> FastAPI:
 
         return {"status": "ok", "database": "ok"}
 
-    app.include_router(users_router)
-    app.include_router(extraction_router)
-    app.include_router(onboarding_router)
-    app.include_router(search_jobs_router)
+    app.include_router(auth_router)
+    app.include_router(me_router)
+    app.include_router(admin_router)
+    app.include_router(job_tracker_me_router)
+    app.include_router(job_tracker_admin_router)
 
     return app
 

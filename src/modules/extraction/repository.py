@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.modules.extraction.models import ExtractionWorkflowRun
@@ -14,6 +15,13 @@ class ExtractionWorkflowRunsRepository:
     async def get_by_id(self, *, workflow_run_id: UUID) -> ExtractionWorkflowRun | None:
         """Fetch a workflow run by identifier."""
         return await self.session.get(ExtractionWorkflowRun, workflow_run_id)
+
+    async def list_all(self) -> list[ExtractionWorkflowRun]:
+        """Return workflow runs ordered by newest first."""
+        result = await self.session.execute(
+            select(ExtractionWorkflowRun).order_by(desc(ExtractionWorkflowRun.created_at))
+        )
+        return list(result.scalars().all())
 
     def add(
         self,

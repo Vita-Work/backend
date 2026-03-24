@@ -8,6 +8,7 @@ from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
 from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.langchain import LangChainSearchJobError
+from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.search_jobs.models import SearchJobWorkflowRun
 from src.modules.search_jobs.schemas import (
     SearchJobWorkflowRunResponse,
@@ -24,6 +25,7 @@ from src.workflows.search_job.schemas import SiteAgentResult, UnifiedJob
 router = APIRouter(prefix="/search-jobs", tags=["search-jobs"])
 db_session_dependency = Depends(get_db_session)
 arq_redis_dependency = Depends(get_arq_redis)
+admin_dependency = Depends(require_admin)
 
 
 def _build_workflow_run_response(
@@ -65,6 +67,7 @@ def _build_workflow_run_response(
 async def queue_search_job_route(
     payload: StartSearchJobWorkflowRequest,
     request: Request,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> SearchJobWorkflowRunResponse:
@@ -94,6 +97,7 @@ async def queue_search_job_route(
 @router.get("/run/{workflow_run_id}", response_model=SearchJobWorkflowRunResponse)
 async def get_search_job_run_route(
     workflow_run_id: UUID,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> SearchJobWorkflowRunResponse:
     """Return the current state of a search-job workflow run."""

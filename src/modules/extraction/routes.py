@@ -8,6 +8,7 @@ from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
 from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
+from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.extraction.models import ExtractionWorkflowRun
 from src.modules.extraction.schemas import (
     CvExtractionWorkflowRunResponse,
@@ -32,6 +33,7 @@ upload_file_field = File(...)
 user_id_form = Form(...)
 db_session_dependency = Depends(get_db_session)
 arq_redis_dependency = Depends(get_arq_redis)
+admin_dependency = Depends(require_admin)
 
 
 def _build_workflow_run_response(
@@ -68,6 +70,7 @@ def _build_workflow_run_response(
 @router.post("/cv", response_model=CvUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_cv_for_extraction(
     file: UploadFile = upload_file_field,
+    _: AuthContext = admin_dependency,
 ) -> CvUploadResponse:
     """Accept a CV upload, store the original file, and prepare extraction input."""
     try:
@@ -116,6 +119,7 @@ async def upload_cv_and_run_extraction(
     request: Request,
     user_id: str = user_id_form,
     file: UploadFile = upload_file_field,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> CvExtractionWorkflowRunResponse:
@@ -151,6 +155,7 @@ async def upload_cv_and_run_extraction(
 @router.get("/cv/run/{workflow_run_id}", response_model=CvExtractionWorkflowRunResponse)
 async def get_cv_extraction_run(
     workflow_run_id: UUID,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> CvExtractionWorkflowRunResponse:
     """Return the current state of an extraction workflow run."""
