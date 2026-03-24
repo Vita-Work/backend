@@ -27,6 +27,8 @@ from src.modules.job_tracker.schemas import (
     CreateTrackedJobActivityRequest,
     CreateTrackedJobContactRequest,
     CreateTrackedJobRequest,
+    JobTrackerActivityFeedItemResponse,
+    JobTrackerDashboardResponse,
     JobTrackerMetricsResponse,
     TrackedJobActivityResponse,
     TrackedJobContactResponse,
@@ -58,6 +60,12 @@ def build_tracked_job_detail(
     payload["activities"] = [TrackedJobActivityResponse.model_validate(item) for item in activities]
     payload["contacts"] = [TrackedJobContactResponse.model_validate(item) for item in contacts]
     return TrackedJobDetailResponse.model_validate(payload)
+
+
+def build_tracked_job_response(*, tracked_job: TrackedJob) -> TrackedJobResponse:
+    payload = TrackedJobResponse.model_validate(tracked_job).model_dump()
+    payload["recommended_next_action"] = recommend_next_action(tracked_job=tracked_job)
+    return TrackedJobResponse.model_validate(payload)
 
 
 def apply_job_updates(*, tracked_job: TrackedJob, payload: UpdateTrackedJobRequest) -> None:
@@ -315,9 +323,103 @@ def compute_job_tracker_metrics(
         conversion_applied_to_interview=ratio(interviews_count, applications_submitted),
         conversion_interview_to_offer=ratio(offers_count, interviews_count),
         jobs_by_status=dict(jobs_by_status),
+        kanban_group_counts=dict(jobs_by_status),
         overdue_followups_count=overdue_followups_count,
         average_days_in_stage=average_days_in_stage,
     )
+
+
+def recommend_next_action(*, tracked_job: TrackedJob) -> str | None:
+    if tracked_job.archived_at is not None:
+        return None
+    if tracked_job.status in {TRACKED_JOB_STATUS_SAVED, "to_apply"}:
+        return "apply_now"
+    if tracked_job.next_follow_up_at is not None:
+        return "send_follow_up"
+    if tracked_job.status in TRACKED_JOB_STATUS_INTERVIEW_STAGES:
+        return "prepare_interview"
+    if tracked_job.status in {TRACKED_JOB_STATUS_OFFER, TRACKED_JOB_STATUS_REJECTED}:
+        return "archive"
+    return None
+
+
+def build_job_tracker_dashboard(
+    *,
+    jobs: list[TrackedJob],
+    activities: list[TrackedJobActivity],
+) -> JobTrackerDashboardResponse:
+    now = utcnow()
+    tracker_totals = compute_job_tracker_metrics(jobs=jobs, activities=activities, now=now)
+    upcoming_followups = sorted(
+        [
+            item
+            for item in activities
+            if item.activity_type == TRACKED_JOB_ACTIVITY_FOLLOW_UP
+            and item.completed_at is None
+            and item.due_at is not None
+            and item.due_at >= now
+        ],
+        key=lambda item: item.due_at or now,
+    )[:10]
+    overdue_followups = sorted(
+        [
+            item
+            for item in activities
+            if item.activity_type == TRACKED_JOB_ACTIVITY_FOLLOW_UP
+            and item.completed_at is None
+            and item.due_at is not None
+            and item.due_at < now
+        ],
+        key=lambda item: item.due_at or now,
+    )[:10]
+    upcoming_interviews = sorted(
+        [
+            item
+            for item in activities
+            if item.activity_type == TRACKED_JOB_ACTIVITY_INTERVIEW and item.event_at is not None
+        ],
+        key=lambda item: item.event_at or now,
+    )[:10]
+    recently_updated_jobs = sorted(
+        jobs,
+        key=lambda item: item.updated_at or item.created_at or now,
+        reverse=True,
+    )[:10]
+    return JobTrackerDashboardResponse(
+        tracker_totals=tracker_totals,
+        upcoming_followups=[
+            TrackedJobActivityResponse.model_validate(item) for item in upcoming_followups
+        ],
+        overdue_followups=[
+            TrackedJobActivityResponse.model_validate(item) for item in overdue_followups
+        ],
+        upcoming_interviews=[
+            TrackedJobActivityResponse.model_validate(item) for item in upcoming_interviews
+        ],
+        recently_updated_jobs=[
+            build_tracked_job_response(tracked_job=item) for item in recently_updated_jobs
+        ],
+    )
+
+
+def build_activity_feed(
+    *,
+    jobs: list[TrackedJob],
+    activities: list[TrackedJobActivity],
+) -> list[JobTrackerActivityFeedItemResponse]:
+    jobs_by_id = {str(job.id): job for job in jobs}
+    feed: list[JobTrackerActivityFeedItemResponse] = []
+    for activity in sorted(activities, key=lambda item: item.created_at or utcnow(), reverse=True):
+        tracked_job = jobs_by_id.get(str(activity.tracked_job_id))
+        if tracked_job is None:
+            continue
+        feed.append(
+            JobTrackerActivityFeedItemResponse(
+                activity=TrackedJobActivityResponse.model_validate(activity),
+                tracked_job=build_tracked_job_response(tracked_job=tracked_job),
+            )
+        )
+    return feed
 
 
 def build_tracked_jobs_csv(*, jobs: Iterable[TrackedJob]) -> str:

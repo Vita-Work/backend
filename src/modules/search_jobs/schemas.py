@@ -35,5 +35,31 @@ class SearchJobWorkflowRunResponse(BaseModel):
     search_model: str | None = None
     unification_model: str | None = None
     error_message: str | None = None
+    current_internal_stage: str | None = None
+    current_display_stage: str | None = None
+    current_display_label: str | None = None
+    current_display_description: str | None = None
+    progress_percent: int | None = None
+    progress_stage_index: int | None = None
+    progress_stage_total: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    last_progress_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None
+
+
+class SearchJobProgressEventResponse(BaseModel):
+    workflow_run_id: UUID
+    event_type: str
+    internal_stage: str | None = None
+    display_stage: str
+    display_label: str
+    display_description: str | None = None
+    site: str | None = None
+    progress_order: int | None = None
+    display_icon_key: str | None = None
+    display_color_key: str | None = None
+    site_display_name: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.logger import get_logger
 from src.modules.extraction.models import ExtractionWorkflowRun
+from src.modules.extraction.progress import update_extraction_progress
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.extraction.use_cases.intake_cv import PreparedCvExtractionInput
 from src.modules.onboarding.repository import OnboardingSessionsRepository
@@ -80,6 +81,13 @@ async def queue_cv_extraction_workflow(
         inline_text_characters=len(prepared_cv.inline_text) if prepared_cv.inline_text else None,
     )
     await session.flush()
+    update_extraction_progress(
+        repository=repository,
+        workflow_run=workflow_run,
+        event_type="phase_changed",
+        phase="upload_received",
+        payload={"storage_key": prepared_cv.stored_object.key},
+    )
     onboarding_session.latest_workflow_run_id = workflow_run.id
     await session.commit()
     await session.refresh(workflow_run)
@@ -97,6 +105,13 @@ async def queue_cv_extraction_workflow(
     except Exception as exc:
         workflow_run.status = "failed"
         workflow_run.error_message = "Failed to enqueue extraction workflow."
+        update_extraction_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="error",
+            phase="file_stored",
+            payload={"error": "Failed to enqueue extraction workflow."},
+        )
         onboarding_session.status = "failed"
         onboarding_session.current_step = "extraction"
         onboarding_session.last_error_message = "Failed to enqueue extraction workflow."

@@ -56,5 +56,27 @@ class CvExtractionWorkflowRunResponse(BaseModel):
     preference_hints: list[str] = Field(default_factory=list)
     extraction_model: str | None = None
     error_message: str | None = None
+    ui_phase: str | None = None
+    ui_label: str | None = None
+    ui_description: str | None = None
+    progress_percent: int | None = None
+    progress_stage_index: int | None = None
+    progress_stage_total: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    last_progress_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None
+
+
+class ExtractionProgressEventResponse(BaseModel):
+    workflow_run_id: UUID
+    event_type: str
+    ui_phase: str
+    ui_label: str
+    ui_description: str | None = None
+    progress_percent: int | None = None
+    progress_stage_index: int | None = None
+    progress_stage_total: int | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime

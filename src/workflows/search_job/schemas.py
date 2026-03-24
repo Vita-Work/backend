@@ -117,6 +117,12 @@ class UnifiedJob(BaseModel):
     risks: list[str] = Field(default_factory=list)
     fit_level: Literal["low", "middle", "high"]
     source_queries: list[str] = Field(default_factory=list)
+    is_saved_to_tracker: bool = False
+    tracked_job_id: str | None = None
+    company_logo_url: str | None = None
+    site_display_name: str | None = None
+    site_logo_key: str | None = None
+    display_badge_label: str | None = None
 
 
 class SiteAgentResult(BaseModel):

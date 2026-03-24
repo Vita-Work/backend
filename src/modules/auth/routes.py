@@ -34,6 +34,7 @@ from src.modules.auth.security import (
     utcnow,
     verify_password,
 )
+from src.modules.me.frontend_state import build_app_state_snapshot
 from src.modules.users.repository import UsersRepository
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -57,13 +58,31 @@ def _generic_accepted() -> GenericAcceptedResponse:
     )
 
 
-def _session_response(*, context: AuthContext | None) -> AuthSessionResponse:
+async def _session_response(
+    *,
+    context: AuthContext | None,
+    session: AsyncSession | None = None,
+    is_new_user: bool | None = None,
+) -> AuthSessionResponse:
     if context is None:
         return AuthSessionResponse(authenticated=False)
+    metadata: dict[str, object | None] = {}
+    if context.role == "user" and session is not None:
+        snapshot = await build_app_state_snapshot(session=session, user=context.user)
+        metadata = {
+            "is_new_user": is_new_user if is_new_user is not None else snapshot.is_new_user,
+            "next_route": snapshot.next_route,
+            "needs_onboarding": snapshot.needs_onboarding,
+            "has_active_onboarding_session": snapshot.has_active_onboarding_session,
+            "has_completed_onboarding": snapshot.has_completed_onboarding,
+            "has_search_results": snapshot.has_search_results,
+            "has_tracker_jobs": snapshot.has_tracker_jobs,
+        }
     return AuthSessionResponse(
         authenticated=True,
         role=context.role,
         user=AuthSessionUserResponse.model_validate(context.user),
+        **metadata,
     )
 
 
@@ -176,6 +195,7 @@ async def verify_email_code_route(
 
     challenge.consumed_at = now
     user = await users_repository.get_by_email(email=email)
+    is_new_user = user is None
     if user is None:
         user = users_repository.add(
             email=email,
@@ -217,10 +237,15 @@ async def verify_email_code_route(
     await session.refresh(user)
     set_auth_cookie(response=response, role="user", token=raw_session_token)
     logger.info("verify_succeeded", email=email, user_id=user.id)
-    return AuthSessionResponse(
-        authenticated=True,
-        role="user",
-        user=AuthSessionUserResponse.model_validate(user),
+    return await _session_response(
+        context=AuthContext(
+            user=user,
+            session_id="bootstrap-login",
+            role="user",
+            cookie_name=settings.auth_cookie_name_user,
+        ),
+        session=session,
+        is_new_user=is_new_user,
     )
 
 
@@ -254,10 +279,14 @@ async def admin_login_route(
     )
     await session.commit()
     set_auth_cookie(response=response, role="admin", token=raw_session_token)
-    return AuthSessionResponse(
-        authenticated=True,
-        role="admin",
-        user=AuthSessionUserResponse.model_validate(user),
+    return await _session_response(
+        context=AuthContext(
+            user=user,
+            session_id="bootstrap-login",
+            role="admin",
+            cookie_name=settings.auth_cookie_name_admin,
+        ),
+        session=session,
     )
 
 
@@ -284,5 +313,6 @@ async def logout_route(
 @router.get("/session", response_model=AuthSessionResponse)
 async def get_auth_session_route(
     context: AuthContext | None = optional_auth_context_dependency,
+    session: AsyncSession = db_session_dependency,
 ) -> AuthSessionResponse:
-    return _session_response(context=context)
+    return await _session_response(context=context, session=session)

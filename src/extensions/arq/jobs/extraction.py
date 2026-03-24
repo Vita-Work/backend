@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.engine import with_session
 from src.extensions.arq.middleware import arq_job_middleware
 from src.logger import get_logger
+from src.modules.extraction.progress import update_extraction_progress
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.onboarding.use_cases.advance_onboarding_flow import (
@@ -45,6 +46,12 @@ async def process_cv_extraction_workflow(
 
     workflow_run.status = "extracting"
     workflow_run.error_message = None
+    update_extraction_progress(
+        repository=repository,
+        workflow_run=workflow_run,
+        event_type="phase_changed",
+        phase="file_stored",
+    )
     if onboarding_session is not None:
         onboarding_session.status = "extracting"
         onboarding_session.current_step = "extraction"
@@ -52,6 +59,12 @@ async def process_cv_extraction_workflow(
     await session.commit()
 
     try:
+        update_extraction_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="step_started",
+            phase="text_extraction",
+        )
         graph = get_search_setup_graph()
         if inspect.isawaitable(graph):
             await graph
@@ -76,11 +89,30 @@ async def process_cv_extraction_workflow(
             config=config,
             durability="sync",
         )
+        update_extraction_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="step_completed",
+            phase="cv_analysis",
+        )
+        update_extraction_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="phase_changed",
+            phase="building_profile",
+        )
         snapshot = await get_search_setup_state(config)
         values = snapshot.values or {}
     except Exception as exc:
         workflow_run.status = "failed"
         workflow_run.error_message = str(exc)
+        update_extraction_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="error",
+            phase="building_profile",
+            payload={"error": str(exc)},
+        )
         if onboarding_session is not None:
             onboarding_session.status = "failed"
             onboarding_session.current_step = "extraction"
@@ -100,6 +132,13 @@ async def process_cv_extraction_workflow(
     workflow_run.preference_hints = values.get("preference_hints", [])
     workflow_run.extraction_model = values.get("extraction_model")
     workflow_run.error_message = None
+    update_extraction_progress(
+        repository=repository,
+        workflow_run=workflow_run,
+        event_type="phase_changed",
+        phase="ready_for_questions",
+        payload={"status": values.get("status", workflow_run.status)},
+    )
     if onboarding_session is not None:
         onboarding_session.latest_workflow_run_id = workflow_run.id
         onboarding_session.extracted_profile = values.get("extracted_profile")

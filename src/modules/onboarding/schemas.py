@@ -48,3 +48,29 @@ class SubmitOnboardingAnswerRequest(BaseModel):
     """User answer for the current onboarding prompt."""
 
     answer: str
+
+
+class OnboardingThreadMessageResponse(BaseModel):
+    id: str
+    role: str
+    message_type: str
+    text: str
+    state: str = "sent"
+    created_at: datetime
+
+
+class OnboardingThreadResponse(BaseModel):
+    onboarding_session_id: UUID
+    conversation_status: str
+    input_mode: str
+    confirmation_mode: str | None = None
+    messages: list[OnboardingThreadMessageResponse] = Field(default_factory=list)
+    search_job_workflow_run_id: UUID | None = None
+
+
+class OnboardingRespondResponse(BaseModel):
+    session: OnboardingSessionResponse
+    thread: OnboardingThreadResponse
+    onboarding_completed: bool = False
+    search_job_enqueued: bool = False
+    search_job_workflow_run_id: UUID | None = None

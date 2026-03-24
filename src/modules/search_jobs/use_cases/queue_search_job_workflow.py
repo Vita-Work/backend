@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.logger import get_logger
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.search_jobs.models import SearchJobWorkflowRun
+from src.modules.search_jobs.progress import update_search_progress
 from src.modules.search_jobs.repository import SearchJobWorkflowRunsRepository
 from src.services import job_parsers as _job_parsers  # noqa: F401
 from src.services.job_parsers.registry import get_registered_parser_names
@@ -50,6 +51,13 @@ async def queue_search_job_workflow(
         source_sites=source_sites,
     )
     await session.flush()
+    update_search_progress(
+        repository=repository,
+        workflow_run=workflow_run,
+        event_type="phase_changed",
+        internal_stage="queued",
+        payload={"source_sites": source_sites},
+    )
     await session.commit()
     await session.refresh(workflow_run)
 
@@ -69,6 +77,7 @@ async def _enqueue_existing_workflow_run(
     parent_request_id: str | None,
 ) -> SearchJobWorkflowRun:
     """Enqueue or re-enqueue an existing persisted workflow run."""
+    repository = SearchJobWorkflowRunsRepository(session=session)
 
     try:
         job = await arq_redis.enqueue_job(
@@ -89,6 +98,13 @@ async def _enqueue_existing_workflow_run(
     except Exception as exc:
         workflow_run.status = "failed"
         workflow_run.error_message = "Failed to enqueue search-job workflow."
+        update_search_progress(
+            repository=repository,
+            workflow_run=workflow_run,
+            event_type="error",
+            internal_stage="failed",
+            payload={"error": "Failed to enqueue search-job workflow."},
+        )
         await session.commit()
         logger.error(
             "search_job_workflow_enqueue_failed",

@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,3 +46,35 @@ class ExtractionWorkflowRun(Base, BaseMixin):
     preference_hints: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     extraction_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ui_phase: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    ui_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ui_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_stage_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_stage_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+
+class ExtractionProgressEvent(Base, BaseMixin):
+    """Persisted frontend-safe extraction progress events."""
+
+    __tablename__ = "extraction_progress_events"
+
+    workflow_run_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    ui_phase: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    ui_label: Mapped[str] = mapped_column(Text, nullable=False)
+    ui_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_stage_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_stage_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)

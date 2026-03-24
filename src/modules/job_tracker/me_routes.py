@@ -15,12 +15,17 @@ from src.modules.job_tracker.constants import (
 )
 from src.modules.job_tracker.repository import TrackedJobsRepository
 from src.modules.job_tracker.schemas import (
+    BulkArchiveTrackedJobsRequest,
+    BulkUpdateTrackedJobsStatusRequest,
     CreateTrackedJobActivityRequest,
     CreateTrackedJobContactRequest,
     CreateTrackedJobRequest,
+    JobTrackerActivityFeedItemResponse,
+    JobTrackerDashboardResponse,
     JobTrackerListQuery,
     JobTrackerMetricsResponse,
     SaveTrackedJobFromSearchRunRequest,
+    SaveTrackedJobFromSearchRunResponse,
     TrackedJobActivityResponse,
     TrackedJobContactResponse,
     TrackedJobDetailResponse,
@@ -31,7 +36,10 @@ from src.modules.job_tracker.schemas import (
 from src.modules.job_tracker.service import (
     apply_job_updates,
     apply_status_transition,
+    build_activity_feed,
+    build_job_tracker_dashboard,
     build_tracked_job_detail,
+    build_tracked_job_response,
     build_tracked_jobs_csv,
     compute_job_tracker_metrics,
     create_activity_payload,
@@ -108,7 +116,7 @@ async def list_my_tracked_jobs_route(
         user_id=str(context.user.id),
         query=query,
     )
-    return [TrackedJobResponse.model_validate(job) for job in jobs]
+    return [build_tracked_job_response(tracked_job=job) for job in jobs]
 
 
 @router.post("/jobs", response_model=TrackedJobResponse, status_code=status.HTTP_201_CREATED)
@@ -147,12 +155,12 @@ async def create_my_tracked_job_route(
     )
     await session.commit()
     await session.refresh(tracked_job)
-    return TrackedJobResponse.model_validate(tracked_job)
+    return build_tracked_job_response(tracked_job=tracked_job)
 
 
 @router.post(
     "/jobs/from-search-run",
-    response_model=TrackedJobResponse,
+    response_model=SaveTrackedJobFromSearchRunResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def save_my_tracked_job_from_search_run_route(
@@ -160,7 +168,7 @@ async def save_my_tracked_job_from_search_run_route(
     response: Response,
     context: AuthContext = user_auth_dependency,
     session: AsyncSession = db_session_dependency,
-) -> TrackedJobResponse:
+) -> SaveTrackedJobFromSearchRunResponse:
     workflow_run = await get_search_job_workflow_run(
         session=session,
         workflow_run_id=payload.workflow_run_id,
@@ -198,7 +206,13 @@ async def save_my_tracked_job_from_search_run_route(
         )
     if existing is not None:
         response.status_code = status.HTTP_200_OK
-        return TrackedJobResponse.model_validate(existing)
+        tracked_job_response = build_tracked_job_response(tracked_job=existing)
+        return SaveTrackedJobFromSearchRunResponse(
+            tracked_job=tracked_job_response,
+            already_saved=True,
+            tracked_job_id=existing.id,
+            tracker_status=existing.status,
+        )
 
     tracked_job = repository.add_job(
         **create_tracked_job_from_unified_job(
@@ -218,7 +232,13 @@ async def save_my_tracked_job_from_search_run_route(
     )
     await session.commit()
     await session.refresh(tracked_job)
-    return TrackedJobResponse.model_validate(tracked_job)
+    tracked_job_response = build_tracked_job_response(tracked_job=tracked_job)
+    return SaveTrackedJobFromSearchRunResponse(
+        tracked_job=tracked_job_response,
+        already_saved=False,
+        tracked_job_id=tracked_job.id,
+        tracker_status=tracked_job.status,
+    )
 
 
 @router.get("/jobs/{tracked_job_id}", response_model=TrackedJobDetailResponse)
@@ -257,7 +277,7 @@ async def update_my_tracked_job_route(
     apply_job_updates(tracked_job=tracked_job, payload=payload)
     await session.commit()
     await session.refresh(tracked_job)
-    return TrackedJobResponse.model_validate(tracked_job)
+    return build_tracked_job_response(tracked_job=tracked_job)
 
 
 @router.delete("/jobs/{tracked_job_id}", response_model=TrackedJobResponse)
@@ -284,7 +304,7 @@ async def archive_my_tracked_job_route(
     )
     await session.commit()
     await session.refresh(tracked_job)
-    return TrackedJobResponse.model_validate(tracked_job)
+    return build_tracked_job_response(tracked_job=tracked_job)
 
 
 @router.post("/jobs/{tracked_job_id}/status", response_model=TrackedJobResponse)
@@ -312,7 +332,7 @@ async def update_my_tracked_job_status_route(
     )
     await session.commit()
     await session.refresh(tracked_job)
-    return TrackedJobResponse.model_validate(tracked_job)
+    return build_tracked_job_response(tracked_job=tracked_job)
 
 
 @router.get(
@@ -460,6 +480,96 @@ async def get_my_job_tracker_metrics_route(
     )
     activities = await repository.list_activities_for_user(user_id=str(context.user.id))
     return compute_job_tracker_metrics(jobs=jobs, activities=activities)
+
+
+@router.get("/dashboard", response_model=JobTrackerDashboardResponse)
+async def get_my_job_tracker_dashboard_route(
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> JobTrackerDashboardResponse:
+    repository = TrackedJobsRepository(session=session)
+    jobs = await repository.list_jobs_for_user(
+        user_id=str(context.user.id),
+        query=JobTrackerListQuery(archived=False),
+    )
+    activities = await repository.list_activities_for_user(user_id=str(context.user.id))
+    return build_job_tracker_dashboard(jobs=jobs, activities=activities)
+
+
+@router.get("/activity-feed", response_model=list[JobTrackerActivityFeedItemResponse])
+async def get_my_job_tracker_activity_feed_route(
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> list[JobTrackerActivityFeedItemResponse]:
+    repository = TrackedJobsRepository(session=session)
+    jobs = await repository.list_jobs_for_user(
+        user_id=str(context.user.id),
+        query=JobTrackerListQuery(archived=False),
+    )
+    activities = await repository.list_activities_for_user(user_id=str(context.user.id))
+    return build_activity_feed(jobs=jobs, activities=activities)[:25]
+
+
+@router.post("/jobs/bulk/status", response_model=list[TrackedJobResponse])
+async def bulk_update_my_tracked_jobs_status_route(
+    payload: BulkUpdateTrackedJobsStatusRequest,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> list[TrackedJobResponse]:
+    repository = TrackedJobsRepository(session=session)
+    updated_jobs = []
+    for tracked_job_id in payload.tracked_job_ids:
+        tracked_job = await _get_owned_tracked_job_or_404(
+            session=session,
+            user_id=str(context.user.id),
+            tracked_job_id=tracked_job_id,
+        )
+        previous_status = tracked_job.status
+        apply_status_transition(tracked_job=tracked_job, status=payload.status)
+        repository.add_activity(
+            **create_status_change_activity_payload(
+                user_id=str(context.user.id),
+                tracked_job_id=tracked_job.id,
+                from_status=previous_status,
+                to_status=payload.status,
+            )
+        )
+        updated_jobs.append(tracked_job)
+    await session.commit()
+    for tracked_job in updated_jobs:
+        await session.refresh(tracked_job)
+    return [build_tracked_job_response(tracked_job=item) for item in updated_jobs]
+
+
+@router.post("/jobs/bulk/archive", response_model=list[TrackedJobResponse])
+async def bulk_archive_my_tracked_jobs_route(
+    payload: BulkArchiveTrackedJobsRequest,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> list[TrackedJobResponse]:
+    repository = TrackedJobsRepository(session=session)
+    archived_jobs = []
+    for tracked_job_id in payload.tracked_job_ids:
+        tracked_job = await _get_owned_tracked_job_or_404(
+            session=session,
+            user_id=str(context.user.id),
+            tracked_job_id=tracked_job_id,
+        )
+        previous_status = tracked_job.status
+        apply_status_transition(tracked_job=tracked_job, status=TRACKED_JOB_STATUS_ARCHIVED)
+        repository.add_activity(
+            **create_status_change_activity_payload(
+                user_id=str(context.user.id),
+                tracked_job_id=tracked_job.id,
+                from_status=previous_status,
+                to_status=tracked_job.status,
+            )
+        )
+        archived_jobs.append(tracked_job)
+    await session.commit()
+    for tracked_job in archived_jobs:
+        await session.refresh(tracked_job)
+    return [build_tracked_job_response(tracked_job=item) for item in archived_jobs]
 
 
 @router.get("/export.csv")

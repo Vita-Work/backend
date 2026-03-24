@@ -82,6 +82,7 @@ class TrackedJobResponse(BaseModel):
     next_follow_up_at: datetime | None = None
     notes_summary: str | None = None
     archived_at: datetime | None = None
+    recommended_next_action: str | None = None
     created_at: datetime
     updated_at: datetime | None
 
@@ -229,6 +230,7 @@ class JobTrackerMetricsResponse(BaseModel):
     conversion_applied_to_interview: float = 0.0
     conversion_interview_to_offer: float = 0.0
     jobs_by_status: dict[str, int] = Field(default_factory=dict)
+    kanban_group_counts: dict[str, int] = Field(default_factory=dict)
     overdue_followups_count: int = 0
     average_days_in_stage: float = 0.0
 
@@ -251,3 +253,46 @@ class JobTrackerListQuery(BaseModel):
         if self.sort not in TRACKED_JOB_SORT_OPTIONS:
             raise ValueError("Invalid sort option.")
         return self
+
+
+class SaveTrackedJobFromSearchRunResponse(BaseModel):
+    tracked_job: TrackedJobResponse
+    already_saved: bool = False
+    tracked_job_id: UUID
+    tracker_status: str
+
+
+class BulkUpdateTrackedJobsStatusRequest(BaseModel):
+    tracked_job_ids: list[UUID] = Field(default_factory=list)
+    status: str
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> BulkUpdateTrackedJobsStatusRequest:
+        if not self.tracked_job_ids:
+            raise ValueError("tracked_job_ids is required.")
+        if self.status not in TRACKED_JOB_STATUSES:
+            raise ValueError("Invalid status.")
+        return self
+
+
+class BulkArchiveTrackedJobsRequest(BaseModel):
+    tracked_job_ids: list[UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> BulkArchiveTrackedJobsRequest:
+        if not self.tracked_job_ids:
+            raise ValueError("tracked_job_ids is required.")
+        return self
+
+
+class JobTrackerDashboardResponse(BaseModel):
+    tracker_totals: JobTrackerMetricsResponse
+    upcoming_followups: list[TrackedJobActivityResponse] = Field(default_factory=list)
+    overdue_followups: list[TrackedJobActivityResponse] = Field(default_factory=list)
+    upcoming_interviews: list[TrackedJobActivityResponse] = Field(default_factory=list)
+    recently_updated_jobs: list[TrackedJobResponse] = Field(default_factory=list)
+
+
+class JobTrackerActivityFeedItemResponse(BaseModel):
+    activity: TrackedJobActivityResponse
+    tracked_job: TrackedJobResponse

@@ -40,6 +40,13 @@ class AuthSessionResponse(BaseModel):
     authenticated: bool
     role: str | None = None
     user: AuthSessionUserResponse | None = None
+    is_new_user: bool | None = None
+    next_route: str | None = None
+    needs_onboarding: bool | None = None
+    has_active_onboarding_session: bool | None = None
+    has_completed_onboarding: bool | None = None
+    has_search_results: bool | None = None
+    has_tracker_jobs: bool | None = None
 
 
 class GenericAcceptedResponse(BaseModel):
