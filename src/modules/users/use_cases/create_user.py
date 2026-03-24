@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +32,10 @@ async def create_user(
     full_name: str | None,
     timezone: str,
     locale: str | None,
+    role: str = "user",
+    password_hash: str | None = None,
+    email_verified_at: datetime | None = None,
+    status: str = "active",
 ) -> User:
     """Create a user in the database."""
     users_repository = UsersRepository(session=session)
@@ -51,6 +57,10 @@ async def create_user(
         full_name=normalized_full_name,
         timezone=normalized_timezone,
         locale=normalized_locale,
+        role=role,
+        password_hash=password_hash,
+        email_verified_at=email_verified_at,
+        status=status,
     )
     try:
         await session.commit()

@@ -23,6 +23,8 @@ class UserResponse(BaseModel):
     full_name: str | None
     timezone: str
     locale: str | None
+    role: str
+    email_verified_at: datetime | None
     status: str
     created_at: datetime
     updated_at: datetime | None

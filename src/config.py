@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -51,6 +53,22 @@ class Settings(BaseSettings):
     search_job_unified_max_jobs: int = 100
     search_job_unified_batch_size: int = 10
 
+    admins: str = "{}"
+    auth_secret_key: str = "dev-auth-secret-change-me"
+    auth_cookie_name_user: str = "vita_user_session"
+    auth_cookie_name_admin: str = "vita_admin_session"
+    auth_session_ttl_days: int = 30
+    auth_email_otp_ttl_minutes: int = 10
+    auth_email_otp_length: int = 6
+    auth_email_otp_max_attempts: int = 5
+    auth_email_resend_cooldown_seconds: int = 60
+    auth_email_requests_per_hour: int = 5
+    auth_session_touch_interval_seconds: int = 300
+    app_base_url: str = "http://127.0.0.1:8000"
+    resend_api_key: str | None = None
+    resend_from_email: str | None = None
+    resend_reply_to: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
@@ -78,6 +96,10 @@ class Settings(BaseSettings):
             return self.log_format
 
         return "console" if self.environment == "local" else "json"
+
+    @property
+    def auth_cookie_secure(self) -> bool:
+        return self.environment not in {"local", "development"}
 
 
 def get_settings() -> Settings:
