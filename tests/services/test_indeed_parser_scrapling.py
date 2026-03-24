@@ -4,6 +4,9 @@ import asyncio
 from dataclasses import dataclass
 
 import pytest
+
+pytest.importorskip("scrapling.fetchers")
+
 from src.services.job_parsers.adapters import indeed as indeed_module
 from src.services.job_parsers.adapters.indeed import IndeedParser
 from src.services.job_parsers.schemas import ScrapeError

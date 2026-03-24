@@ -28,6 +28,48 @@ class SiteJobListing(BaseModel):
     company_url: str | None = None
 
 
+class SearchExecutionPlan(BaseModel):
+    """Runtime plan for one staged search-job execution."""
+
+    queries: list[str] = Field(default_factory=list)
+    include_keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    remote_only: bool = False
+    salary_from: int | None = None
+    seniority: str | None = None
+    target_sites: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ListingCandidate(BaseModel):
+    """Internal listing-level candidate collected before detail fetch."""
+
+    site: str
+    query: str
+    job_url: str
+    title: str | None = None
+    company_name: str | None = None
+    location: str | None = None
+    salary_text: str | None = None
+    published_at: str | None = None
+    company_url: str | None = None
+
+
+class DetailFetchCandidate(BaseModel):
+    """Deduped listing candidate selected for detail expansion."""
+
+    site: str
+    job_url: str
+    title: str | None = None
+    company_name: str | None = None
+    location: str | None = None
+    salary_text: str | None = None
+    published_at: str | None = None
+    company_url: str | None = None
+    source_queries: list[str] = Field(default_factory=list)
+
+
 class SiteJobDetail(BaseModel):
     """Detailed normalized job payload returned by the details tool."""
 

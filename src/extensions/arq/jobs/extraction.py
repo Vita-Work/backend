@@ -13,7 +13,11 @@ from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.onboarding.use_cases.advance_onboarding_flow import (
     _apply_graph_state_to_onboarding_session,
 )
-from src.workflows.search_setup.runtime import get_search_setup_graph
+from src.workflows.search_setup.runtime import (
+    get_search_setup_graph,
+    get_search_setup_state,
+    invoke_search_setup_graph,
+)
 
 logger = get_logger("arq.jobs.extraction")
 
@@ -50,11 +54,11 @@ async def process_cv_extraction_workflow(
     try:
         graph = get_search_setup_graph()
         if inspect.isawaitable(graph):
-            graph = await graph
+            await graph
         thread_id = str(onboarding_session.id) if onboarding_session else str(workflow_run.id)
         config = {"configurable": {"thread_id": thread_id}}
-        result = await graph.ainvoke(
-            {
+        result = await invoke_search_setup_graph(
+            graph_input={
                 "messages": [],
                 "status": "ingesting",
                 "user_id": workflow_run.user_id,
@@ -69,10 +73,10 @@ async def process_cv_extraction_workflow(
                 "clarification_cycle_start_index": 0,
                 "verification_retry_count": 0,
             },
-            config,
+            config=config,
             durability="sync",
         )
-        snapshot = await graph.aget_state(config)
+        snapshot = await get_search_setup_state(config)
         values = snapshot.values or {}
     except Exception as exc:
         workflow_run.status = "failed"

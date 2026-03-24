@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
 from src.extensions.gemini import GeminiIntegrationError
-from src.extensions.langchain import LangChainSearchJobError
 from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.search_jobs.models import SearchJobWorkflowRun
 from src.modules.search_jobs.schemas import (
@@ -81,11 +80,7 @@ async def queue_search_job_route(
         )
     except SearchJobWorkflowNotReadyError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except (
-        SearchJobWorkflowEnqueueError,
-        GeminiIntegrationError,
-        LangChainSearchJobError,
-    ) as exc:
+    except (SearchJobWorkflowEnqueueError, GeminiIntegrationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
