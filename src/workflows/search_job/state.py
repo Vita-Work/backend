@@ -33,6 +33,9 @@ class SearchJobState(TypedDict):
     hard_preferences: list[str]
     soft_preferences: list[str]
     source_sites: list[str]
+    monitoring_mode: bool
+    seen_job_urls: list[str]
+    seen_job_fingerprints: list[str]
 
     execution_plan: NotRequired[SearchExecutionPlan]
     active_site: NotRequired[str]

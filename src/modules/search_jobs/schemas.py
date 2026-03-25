@@ -10,6 +10,7 @@ class StartSearchJobWorkflowRequest(BaseModel):
     """Start a search-job workflow from a completed onboarding session."""
 
     user_id: str
+    monitoring_mode: bool = False
 
 
 class SearchJobWorkflowRunResponse(BaseModel):
@@ -25,6 +26,7 @@ class SearchJobWorkflowRunResponse(BaseModel):
     hard_preferences: list[str] = Field(default_factory=list)
     soft_preferences: list[str] = Field(default_factory=list)
     source_sites: list[str] = Field(default_factory=list)
+    monitoring_mode: bool = False
     total_site_results: int = 0
     total_jobs_found: int = 0
     total_jobs_returned: int = 0

@@ -7,9 +7,9 @@ from src.workflows.search_job.dedupe import (
     canonical_job_url,
     cosine_similarity,
     locations_compatible,
-    normalize_text,
     text_similarity,
 )
+from src.workflows.search_job.history import build_job_fingerprint
 from src.workflows.search_job.schemas import SiteJobDetail
 from src.workflows.search_job.state import SearchJobState
 
@@ -29,7 +29,13 @@ async def detail_dedupe_node(state: SearchJobState) -> dict[str, object]:
     deduped_by_url: dict[str, SiteJobDetail] = {}
     deduped_by_fingerprint: dict[str, SiteJobDetail] = {}
     for detail in details:
-        if _should_reject_detail(detail=detail, plan=plan):
+        if _should_reject_detail(
+            detail=detail,
+            plan=plan,
+            monitoring_mode=state.get("monitoring_mode", False),
+            seen_job_urls=set(state.get("seen_job_urls", [])),
+            seen_job_fingerprints=set(state.get("seen_job_fingerprints", [])),
+        ):
             continue
 
         canonical_url = canonical_job_url(detail.job_url)
@@ -75,7 +81,26 @@ async def detail_dedupe_node(state: SearchJobState) -> dict[str, object]:
     }
 
 
-def _should_reject_detail(*, detail: SiteJobDetail, plan) -> bool:
+def _should_reject_detail(
+    *,
+    detail: SiteJobDetail,
+    plan,
+    monitoring_mode: bool,
+    seen_job_urls: set[str],
+    seen_job_fingerprints: set[str],
+) -> bool:
+    if monitoring_mode:
+        canonical_url = canonical_job_url(detail.job_url)
+        fingerprint = build_job_fingerprint(
+            title=detail.title,
+            company_name=detail.company_name,
+            location=detail.location,
+        )
+        if canonical_url in seen_job_urls:
+            return True
+        if fingerprint is not None and fingerprint in seen_job_fingerprints:
+            return True
+
     haystack = " ".join(
         filter(
             None,
@@ -128,12 +153,11 @@ def _detail_completeness_score(detail: SiteJobDetail) -> int:
 
 
 def _detail_fingerprint(detail: SiteJobDetail) -> str | None:
-    title = normalize_text(detail.title)
-    company = normalize_text(detail.company_name)
-    location = normalize_text(detail.location)
-    if not title or not company:
-        return None
-    return "|".join([title, company, location])
+    return build_job_fingerprint(
+        title=detail.title,
+        company_name=detail.company_name,
+        location=detail.location,
+    )
 
 
 async def _apply_embedding_dedupe(

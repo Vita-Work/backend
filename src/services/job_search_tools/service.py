@@ -16,6 +16,7 @@ from src.services.job_parsers.schemas import (
     VacancyRecord,
     VacancySeed,
 )
+from src.workflows.search_job.history import build_job_fingerprint
 from src.workflows.search_job.schemas import SiteJobDetail, SiteJobListing
 
 logger = get_logger("services.job_search_tools")
@@ -88,6 +89,10 @@ class ListSiteJobsArgs(BaseModel):
     salary_from: int | None = None
     max_pages: int = Field(default=1, ge=1, le=3)
     max_items: int = Field(default=10, ge=1, le=20)
+    monitoring_mode: bool = False
+    seen_job_urls: list[str] = Field(default_factory=list)
+    seen_job_fingerprints: list[str] = Field(default_factory=list)
+    max_stale_pages: int = Field(default=1, ge=1, le=3)
 
 
 @dataclass
@@ -130,6 +135,9 @@ class JobSiteToolsService:
             results: list[SiteJobListing] = []
             visited: set[str] = set()
             queue = list(search_urls)
+            seen_job_urls = set(args.seen_job_urls)
+            seen_job_fingerprints = set(args.seen_job_fingerprints)
+            stale_pages = 0
 
             while queue and len(visited) < args.max_pages and len(results) < args.max_items:
                 page_url = queue.pop(0)
@@ -148,11 +156,23 @@ class JobSiteToolsService:
                     continue
 
                 listing = parser.parse_listing_page(html_text, page_url)
+                page_new_unique = 0
                 for seed in listing.vacancies:
                     canonical_url = self._canonical_job_url(seed.job_url)
+                    fingerprint = build_job_fingerprint(
+                        title=seed.title,
+                        company_name=seed.company_name,
+                        location=seed.location,
+                    )
+                    is_seen = canonical_url in seen_job_urls or (
+                        fingerprint is not None and fingerprint in seen_job_fingerprints
+                    )
                     self._seed_cache[canonical_url] = seed.model_copy(
                         update={"job_url": canonical_url}
                     )
+                    if args.monitoring_mode and is_seen:
+                        continue
+
                     results.append(
                         SiteJobListing(
                             site=self.site_name,
@@ -165,7 +185,22 @@ class JobSiteToolsService:
                             company_url=seed.company_url,
                         )
                     )
+                    page_new_unique += 1
+                    seen_job_urls.add(canonical_url)
+                    if fingerprint is not None:
+                        seen_job_fingerprints.add(fingerprint)
                     if len(results) >= args.max_items:
+                        break
+
+                if args.monitoring_mode:
+                    stale_pages = stale_pages + 1 if page_new_unique == 0 else 0
+                    if stale_pages >= args.max_stale_pages:
+                        logger.info(
+                            "job_site_monitoring_query_exhausted",
+                            site=self.site_name,
+                            page_url=page_url,
+                            stale_pages=stale_pages,
+                        )
                         break
 
                 if listing.next_page_url and listing.next_page_url not in visited:

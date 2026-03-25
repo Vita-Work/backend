@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from src.config import get_settings
 
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = os.getenv("E2E_BASE_URL", "http://127.0.0.1:8001")
 DEFAULT_POLL_SECONDS = 3
+DEFAULT_ADMIN_EMAIL = os.getenv("E2E_ADMIN_EMAIL", "admin-e2e@example.com")
+DEFAULT_ADMIN_PASSWORD = os.getenv("E2E_ADMIN_PASSWORD", "admin-pass-123")
 
 SCENARIOS: dict[str, dict[str, object]] = {
     "senior_backend_remote": {
@@ -115,6 +118,20 @@ async def _latest_search_job_run(user_id: str, onboarding_session_id: str) -> di
     return {"id": row[0], "status": row[1]}
 
 
+async def _wait_for_api_ready(client: httpx.AsyncClient, *, timeout_seconds: int = 60) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            response = await client.get("/health")
+            response.raise_for_status()
+            return
+        except Exception as exc:  # pragma: no cover - exercised in live E2E only
+            last_error = exc
+            await asyncio.sleep(1)
+    raise RuntimeError("API did not become ready in time.") from last_error
+
+
 async def _poll_json(
     client: httpx.AsyncClient,
     *,
@@ -139,6 +156,41 @@ async def _poll_json(
     return last_payload
 
 
+async def _admin_login(
+    client: httpx.AsyncClient,
+    *,
+    email: str,
+    password: str,
+) -> None:
+    response = await client.post(
+        "/auth/admin/login",
+        json={"email": email, "password": password},
+    )
+    if response.status_code == 401:
+        raise RuntimeError(
+            "Admin login failed. Start the app with matching ADMINS env, for example: "
+            f'ADMINS=\'{{"{email}":"{password}"}}\''
+        )
+    response.raise_for_status()
+    session_payload = response.json()
+    if not session_payload.get("authenticated"):
+        raise RuntimeError("Admin session was not established.")
+    print("admin_login_ok", email)
+
+
+async def _create_user_via_admin(
+    client: httpx.AsyncClient,
+    *,
+    scenario_name: str,
+    scenario: dict[str, object],
+) -> dict[str, object]:
+    user_payload = dict(scenario["user"])
+    user_payload["email"] = f"{scenario_name}-{int(time.time())}@example.com"
+    response = await client.post("/admin/users", json=user_payload)
+    response.raise_for_status()
+    return response.json()
+
+
 async def _drive_onboarding(
     client: httpx.AsyncClient,
     *,
@@ -155,7 +207,7 @@ async def _drive_onboarding(
     )
 
     steps = 0
-    while onboarding["status"] != "completed" and steps < 10:
+    while onboarding["status"] != "completed" and steps < 12:
         steps += 1
         pending_prompt = onboarding.get("pending_user_prompt")
         if pending_prompt:
@@ -182,24 +234,112 @@ async def _drive_onboarding(
     return onboarding
 
 
-async def run_scenario(*, scenario_name: str) -> dict[str, object]:
+def _print_search_summary(*, label: str, search_result: dict[str, object]) -> None:
+    print(label, search_result["status"])
+    print(
+        "totals",
+        search_result.get("total_site_results"),
+        search_result.get("total_jobs_found"),
+        search_result.get("total_jobs_returned"),
+    )
+    print("notes", json.dumps(search_result.get("notes", [])[:10], ensure_ascii=False))
+    for site_result in search_result.get("site_results", []):
+        print(
+            "site",
+            site_result["site"],
+            site_result["status"],
+            len(site_result.get("listings_seen", [])),
+            len(site_result.get("selected_jobs", [])),
+            site_result.get("reason"),
+        )
+    for job in search_result.get("jobs", [])[:10]:
+        print(
+            "job",
+            json.dumps(
+                {
+                    "fit": job.get("fit_level"),
+                    "site": job.get("site"),
+                    "title": job.get("title"),
+                    "company": job.get("company_name"),
+                    "url": job.get("job_url"),
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+
+async def _run_search_job(
+    client: httpx.AsyncClient,
+    *,
+    user_id: str,
+    onboarding_session_id: str,
+    monitoring_mode: bool,
+) -> dict[str, object]:
+    latest_run = await _latest_search_job_run(user_id, onboarding_session_id)
+    active_statuses = {
+        "queued",
+        "planning",
+        "searching",
+        "deduping",
+        "fetching_details",
+        "unifying",
+    }
+    if not monitoring_mode and latest_run is not None and latest_run["status"] in active_statuses:
+        search_job_run_id = latest_run["id"]
+    else:
+        search_response = await client.post(
+            f"/admin/users/{user_id}/search-jobs/run",
+            params={"monitoring_mode": str(monitoring_mode).lower()},
+        )
+        search_response.raise_for_status()
+        search_job_run = search_response.json()
+        search_job_run_id = search_job_run["workflow_run_id"]
+    print("search_run_id", search_job_run_id, "monitoring", monitoring_mode)
+    search_result = await _poll_json(
+        client,
+        path=f"/admin/search-job-runs/{search_job_run_id}",
+        timeout_seconds=1200,
+        break_on=lambda payload: payload.get("status") in {"completed", "failed"},
+    )
+    latest_run = await _latest_search_job_run(user_id, onboarding_session_id)
+    print("latest_search_run", latest_run)
+    return search_result
+
+
+async def run_scenario(
+    *,
+    scenario_name: str,
+    admin_email: str,
+    admin_password: str,
+    monitoring_repeats: int,
+) -> dict[str, object]:
     scenario = SCENARIOS[scenario_name]
-    user_payload = dict(scenario["user"])
-    user_payload["email"] = f"{scenario_name}-{int(time.time())}@example.com"
     pdf_path: Path = scenario["pdf_path"]
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=120) as client:
-        user_response = await client.post("/users", json=user_payload)
-        user_response.raise_for_status()
-        user = user_response.json()
+    async with httpx.AsyncClient(
+        base_url=BASE_URL,
+        timeout=120,
+        follow_redirects=True,
+    ) as client:
+        await _wait_for_api_ready(client)
+        await _admin_login(client, email=admin_email, password=admin_password)
+
+        user = await _create_user_via_admin(
+            client,
+            scenario_name=scenario_name,
+            scenario=scenario,
+        )
         user_id = user["id"]
         print("user_id", user_id)
 
+        restart_response = await client.post(f"/admin/users/{user_id}/onboarding/restart")
+        restart_response.raise_for_status()
+        print("onboarding_restarted", restart_response.json()["id"])
+
         with pdf_path.open("rb") as pdf_file:
             extraction_response = await client.post(
-                "/extraction/cv/run",
+                f"/admin/users/{user_id}/extraction/run",
                 files={"file": (pdf_path.name, pdf_file, "application/pdf")},
-                data={"user_id": user_id},
             )
         extraction_response.raise_for_status()
         extraction_run = extraction_response.json()
@@ -208,7 +348,7 @@ async def run_scenario(*, scenario_name: str) -> dict[str, object]:
 
         extraction_result = await _poll_json(
             client,
-            path=f"/extraction/cv/run/{extraction_run_id}",
+            path=f"/admin/extraction-runs/{extraction_run_id}",
             timeout_seconds=300,
             break_on=lambda payload: payload.get("status") not in {"queued", "extracting"},
         )
@@ -227,68 +367,50 @@ async def run_scenario(*, scenario_name: str) -> dict[str, object]:
         print("hard_preferences", onboarding.get("hard_preferences"))
         print("soft_preferences", onboarding.get("soft_preferences"))
 
-        search_run = None
-        for _ in range(10):
-            search_run = await _latest_search_job_run(user_id, onboarding["id"])
-            if search_run is not None:
-                break
-            await asyncio.sleep(2)
-
-        if search_run is None:
-            search_response = await client.post("/search-jobs/run", json={"user_id": user_id})
-            search_response.raise_for_status()
-            search_job_run = search_response.json()
-            search_job_run_id = search_job_run["workflow_run_id"]
-        else:
-            search_job_run_id = search_run["id"]
-
-        print("search_run_id", search_job_run_id)
-        search_result = await _poll_json(
+        initial_search = await _run_search_job(
             client,
-            path=f"/search-jobs/run/{search_job_run_id}",
-            timeout_seconds=1200,
-            break_on=lambda payload: payload.get("status") in {"completed", "failed"},
+            user_id=user_id,
+            onboarding_session_id=onboarding["id"],
+            monitoring_mode=False,
         )
-        print("search_status", search_result["status"])
-        print(
-            "totals",
-            search_result.get("total_site_results"),
-            search_result.get("total_jobs_found"),
-            search_result.get("total_jobs_returned"),
-        )
-        print("notes", json.dumps(search_result.get("notes", [])[:10], ensure_ascii=False))
-        for site_result in search_result.get("site_results", []):
-            print(
-                "site",
-                site_result["site"],
-                site_result["status"],
-                len(site_result.get("listings_seen", [])),
-                len(site_result.get("selected_jobs", [])),
-                site_result.get("reason"),
+        _print_search_summary(label="initial_search_status", search_result=initial_search)
+
+        monitoring_results: list[dict[str, object]] = []
+        previous_job_urls = {
+            str(job.get("job_url")) for job in initial_search.get("jobs", []) if job.get("job_url")
+        }
+        for repeat_index in range(monitoring_repeats):
+            monitoring_result = await _run_search_job(
+                client,
+                user_id=user_id,
+                onboarding_session_id=onboarding["id"],
+                monitoring_mode=True,
             )
-        for job in search_result.get("jobs", [])[:10]:
-            print(
-                "job",
-                json.dumps(
-                    {
-                        "fit": job.get("fit_level"),
-                        "site": job.get("site"),
-                        "title": job.get("title"),
-                        "company": job.get("company_name"),
-                        "url": job.get("job_url"),
-                    },
-                    ensure_ascii=False,
-                ),
+            _print_search_summary(
+                label=f"monitoring_search_status_{repeat_index + 1}",
+                search_result=monitoring_result,
             )
+            current_urls = {
+                str(job.get("job_url"))
+                for job in monitoring_result.get("jobs", [])
+                if job.get("job_url")
+            }
+            print(
+                "monitoring_overlap",
+                repeat_index + 1,
+                len(previous_job_urls & current_urls),
+                len(current_urls),
+            )
+            previous_job_urls = current_urls
+            monitoring_results.append(monitoring_result)
 
         return {
             "scenario": scenario_name,
             "user_id": user_id,
             "extraction_run_id": extraction_run_id,
             "onboarding_session_id": onboarding["id"],
-            "search_job_run_id": search_job_run_id,
-            "search_status": search_result["status"],
-            "search_result": search_result,
+            "initial_search": initial_search,
+            "monitoring_results": monitoring_results,
         }
 
 
@@ -301,11 +423,32 @@ async def _main() -> None:
         choices=sorted(SCENARIOS.keys()),
         help="Scenario name to run. Can be provided multiple times. Defaults to all.",
     )
+    parser.add_argument(
+        "--admin-email",
+        default=DEFAULT_ADMIN_EMAIL,
+        help="Admin email bootstrapped via ADMINS env when starting the app.",
+    )
+    parser.add_argument(
+        "--admin-password",
+        default=DEFAULT_ADMIN_PASSWORD,
+        help="Admin password bootstrapped via ADMINS env when starting the app.",
+    )
+    parser.add_argument(
+        "--monitoring-repeats",
+        type=int,
+        default=1,
+        help="How many monitoring runs to execute after the initial search.",
+    )
     args = parser.parse_args()
     scenario_names = args.scenarios or list(SCENARIOS.keys())
     for scenario_name in scenario_names:
         print(f"=== scenario:{scenario_name} ===")
-        await run_scenario(scenario_name=scenario_name)
+        await run_scenario(
+            scenario_name=scenario_name,
+            admin_email=args.admin_email,
+            admin_password=args.admin_password,
+            monitoring_repeats=max(0, args.monitoring_repeats),
+        )
 
 
 def _answer_for_prompt(*, prompt: str, scenario: dict[str, object]) -> str:

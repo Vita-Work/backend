@@ -9,7 +9,10 @@ from src.db.engine import with_session
 from src.extensions.arq.middleware import arq_job_middleware
 from src.logger import get_logger
 from src.modules.search_jobs.progress import update_search_progress
-from src.modules.search_jobs.repository import SearchJobWorkflowRunsRepository
+from src.modules.search_jobs.repository import (
+    SearchJobSeenJobsRepository,
+    SearchJobWorkflowRunsRepository,
+)
 from src.services import job_parsers as _job_parsers  # noqa: F401
 from src.services.job_parsers.registry import get_registered_parser_names
 from src.workflows.search_job.graph import get_search_job_graph
@@ -91,6 +94,7 @@ async def process_search_job_workflow(
     """Run the search-job workflow in the background and persist the result."""
     _ = ctx
     repository = SearchJobWorkflowRunsRepository(session=session)
+    seen_jobs_repository = SearchJobSeenJobsRepository(session=session)
     workflow_run = await repository.get_by_id(workflow_run_id=UUID(workflow_run_id))
     if workflow_run is None:
         raise RuntimeError(f"Search job workflow run not found: {workflow_run_id}")
@@ -108,6 +112,16 @@ async def process_search_job_workflow(
     await session.commit()
 
     try:
+        seen_job_urls: list[str] = []
+        seen_job_fingerprints: list[str] = []
+        if workflow_run.monitoring_mode:
+            seen_job_urls = await seen_jobs_repository.list_seen_job_urls(
+                user_id=workflow_run.user_id
+            )
+            seen_job_fingerprints = await seen_jobs_repository.list_seen_job_fingerprints(
+                user_id=workflow_run.user_id
+            )
+
         graph = get_search_job_graph()
         initial_state = {
             "status": "queued",
@@ -117,6 +131,9 @@ async def process_search_job_workflow(
             "hard_preferences": workflow_run.hard_preferences or [],
             "soft_preferences": workflow_run.soft_preferences or [],
             "source_sites": workflow_run.source_sites or [],
+            "monitoring_mode": workflow_run.monitoring_mode,
+            "seen_job_urls": seen_job_urls,
+            "seen_job_fingerprints": seen_job_fingerprints,
             "site_results": [],
             "listing_candidates": [],
             "detailed_jobs": [],
@@ -169,6 +186,11 @@ async def process_search_job_workflow(
         raise
 
     workflow_run.status = "completed"
+    await seen_jobs_repository.record_delivered_jobs(
+        user_id=workflow_run.user_id,
+        workflow_run_id=workflow_run.id,
+        jobs=final_jobs,
+    )
     workflow_run.total_site_results = len(site_results)
     workflow_run.total_jobs_found = sum(len(result.selected_jobs) for result in site_results)
     workflow_run.total_jobs_returned = len(final_jobs)

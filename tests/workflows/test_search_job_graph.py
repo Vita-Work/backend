@@ -289,9 +289,113 @@ def test_search_job_graph_handles_empty_plan_and_unsupported_site(monkeypatch) -
 
     assert result["status"] == "completed"
     assert result["execution_plan"].queries == ["Search for backend roles in safe fallback mode."]
+
+
+def test_search_job_graph_monitoring_mode_filters_previously_seen_jobs(monkeypatch) -> None:
+    class FakeMonitoringPlanService:
+        model_name = "gemini/fake-dspy"
+
+        async def build_search_job_execution_plan(
+            self,
+            *,
+            search_strategy_summary: str,
+            hard_preferences: list[str],
+            soft_preferences: list[str],
+            available_sites: list[str],
+        ) -> SearchExecutionPlan:
+            assert search_strategy_summary
+            assert hard_preferences == ["remote"]
+            assert soft_preferences == ["product"]
+            assert available_sites == ["alpha"]
+            return SearchExecutionPlan(
+                queries=["python backend remote"],
+                include_keywords=["python", "backend", "platform"],
+                exclude_keywords=["intern"],
+                locations=[],
+                remote_only=True,
+                target_sites=["alpha"],
+                notes=["plan ready"],
+            )
+
+    class FakeMonitoringToolService(FakeToolService):
+        async def list_site_jobs(self, *, args):
+            _ = args
+            return [
+                SiteJobListing(
+                    site="alpha",
+                    title="Backend Engineer",
+                    company_name="Acme",
+                    location="Remote",
+                    job_url="https://alpha.example/jobs/acme-backend",
+                ),
+                SiteJobListing(
+                    site="alpha",
+                    title="Platform Engineer",
+                    company_name="Beta Labs",
+                    location="Remote",
+                    job_url="https://alpha.example/jobs/platform",
+                ),
+            ]
+
+    monkeypatch.setattr(
+        plan_nodes,
+        "get_dspy_search_setup_service",
+        lambda: FakeMonitoringPlanService(),
+    )
+    monkeypatch.setattr(
+        parser_nodes,
+        "get_job_site_tools_service",
+        lambda site_name: FakeMonitoringToolService(site_name),
+    )
+    monkeypatch.setattr(
+        detail_fetch_nodes,
+        "get_job_site_tools_service",
+        lambda site_name: FakeMonitoringToolService(site_name),
+    )
+    monkeypatch.setattr(
+        rank_nodes,
+        "get_gemini_job_search_service",
+        lambda: FakeGeminiJobSearchService(),
+    )
+    monkeypatch.setattr(
+        listing_dedupe_nodes,
+        "get_gemini_embeddings_service",
+        lambda: FakeEmbeddingsService(),
+    )
+    monkeypatch.setattr(
+        detail_dedupe_nodes,
+        "get_gemini_embeddings_service",
+        lambda: FakeEmbeddingsService(),
+    )
+
+    graph = build_search_job_graph()
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "status": "queued",
+                "user_id": "user-1",
+                "onboarding_session_id": "session-1",
+                "search_strategy_summary": "Focus on remote backend roles.",
+                "hard_preferences": ["remote"],
+                "soft_preferences": ["product"],
+                "source_sites": ["alpha"],
+                "monitoring_mode": True,
+                "seen_job_urls": ["https://alpha.example/jobs/acme-backend"],
+                "seen_job_fingerprints": [],
+                "site_results": [],
+                "listing_candidates": [],
+                "detailed_jobs": [],
+                "unified_jobs": [],
+                "batch_notes": [],
+            }
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert len(result["final_jobs"]) == 1
+    assert result["final_jobs"][0].job_url == "https://alpha.example/jobs/platform"
+    assert "Monitoring mode: on" in result["summary_markdown"]
     assert result["source_sites"] == ["alpha"]
-    assert len(result["final_jobs"]) == 0
-    assert result["final_site_results"][0].status == "skipped"
 
 
 def test_listing_dedupe_semantic_layer_merges_cross_site_duplicates(monkeypatch) -> None:

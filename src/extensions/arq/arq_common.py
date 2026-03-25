@@ -1,4 +1,6 @@
 from arq.connections import RedisSettings
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from src.config import get_settings
 from src.extensions.arq.jobs.extraction import process_cv_extraction_workflow
@@ -21,6 +23,12 @@ REDIS_SETTINGS = RedisSettings(
     port=settings.redis_port,
     database=settings.redis_db,
     password=settings.redis_password,
+    conn_timeout=settings.redis_conn_timeout_seconds,
+    conn_retries=settings.redis_conn_retries,
+    conn_retry_delay=settings.redis_conn_retry_delay_seconds,
+    max_connections=settings.redis_max_connections,
+    retry_on_timeout=settings.redis_retry_on_timeout,
+    retry_on_error=[RedisConnectionError, RedisTimeoutError],
 )
 
 _arq_initialized = False

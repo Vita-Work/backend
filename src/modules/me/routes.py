@@ -7,6 +7,7 @@ from uuid import UUID
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
@@ -240,6 +241,9 @@ async def run_my_extraction_route(
 ) -> CvExtractionWorkflowRunResponse:
     try:
         prepared_cv = await intake_cv_for_extraction(upload=file)
+        # The authenticated request may already hold a DB connection from auth/session lookups.
+        # Release it after long-running upload/storage I/O before we start a write transaction.
+        await session.rollback()
         workflow_run = await queue_cv_extraction_workflow(
             session=session,
             arq_redis=arq_redis,
@@ -260,6 +264,11 @@ async def run_my_extraction_route(
     except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is temporarily unavailable.",
         ) from exc
     return build_extraction_response(workflow_run=workflow_run)
 
@@ -342,6 +351,7 @@ async def stream_my_extraction_run_events_route(
 )
 async def run_my_search_jobs_route(
     request: Request,
+    monitoring_mode: bool = False,
     context: AuthContext = user_auth_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
@@ -351,6 +361,7 @@ async def run_my_search_jobs_route(
             session=session,
             arq_redis=arq_redis,
             user_id=str(context.user.id),
+            monitoring_mode=monitoring_mode,
             parent_request_id=getattr(request.state, "request_id", None),
         )
     except SearchJobWorkflowNotReadyError as exc:
