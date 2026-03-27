@@ -82,7 +82,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     }:
         return AppStateSnapshot(
             phase="searching_jobs",
-            next_route="/searching",
+            next_route="/search/new",
             needs_onboarding=not has_completed_onboarding,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -103,7 +103,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     if has_search_results:
         return AppStateSnapshot(
             phase="results_ready",
-            next_route="/jobs",
+            next_route="/search/results",
             needs_onboarding=False,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -125,7 +125,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         if active_onboarding.status in {"extracting"}:
             return AppStateSnapshot(
                 phase="processing_cv",
-                next_route="/onboarding/processing",
+                next_route="/onboarding",
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -139,7 +139,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         if active_onboarding.status == "awaiting_confirmation":
             return AppStateSnapshot(
                 phase="awaiting_confirmation",
-                next_route="/onboarding/chat",
+                next_route="/onboarding",
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -158,7 +158,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         }:
             return AppStateSnapshot(
                 phase="onboarding_chat",
-                next_route="/onboarding/chat",
+                next_route="/onboarding",
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -173,7 +173,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     if latest_extraction is not None and latest_extraction.status in {"queued", "extracting"}:
         return AppStateSnapshot(
             phase="processing_cv",
-            next_route="/onboarding/processing",
+            next_route="/onboarding",
             needs_onboarding=True,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -187,7 +187,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
 
     return AppStateSnapshot(
         phase="new_user" if is_new_user else "upload_cv",
-        next_route="/auth/welcome" if is_new_user else "/onboarding/upload-cv",
+        next_route="/onboarding",
         needs_onboarding=not has_completed_onboarding,
         has_active_onboarding_session=has_active_onboarding_session,
         has_completed_onboarding=has_completed_onboarding,
