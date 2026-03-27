@@ -17,6 +17,11 @@ class WorkflowEnqueueError(RuntimeError):
     """Raised when an extraction workflow cannot be queued."""
 
 
+def _supersede_onboarding_session(*, session_to_supersede, replacement_session_id) -> None:
+    session_to_supersede.status = "superseded"
+    session_to_supersede.superseded_by_session_id = replacement_session_id
+
+
 async def queue_cv_extraction_workflow(
     *,
     session: AsyncSession,
@@ -28,7 +33,8 @@ async def queue_cv_extraction_workflow(
     """Persist and enqueue a workflow run for background processing."""
     repository = ExtractionWorkflowRunsRepository(session=session)
     onboarding_repository = OnboardingSessionsRepository(session=session)
-    onboarding_session = await onboarding_repository.get_active_for_user(user_id=user_id)
+    active_sessions = await onboarding_repository.list_active_for_user(user_id=user_id)
+    onboarding_session = active_sessions[0] if active_sessions else None
 
     if onboarding_session is None:
         onboarding_session = onboarding_repository.add(
@@ -38,6 +44,11 @@ async def queue_cv_extraction_workflow(
         )
         await session.flush()
     elif onboarding_session.status == "draft":
+        for stale_session in active_sessions[1:]:
+            _supersede_onboarding_session(
+                session_to_supersede=stale_session,
+                replacement_session_id=onboarding_session.id,
+            )
         onboarding_session.status = "extracting"
         onboarding_session.current_step = "extraction"
         onboarding_session.latest_workflow_run_id = None
@@ -55,14 +66,20 @@ async def queue_cv_extraction_workflow(
         onboarding_session.extraction_model = None
         onboarding_session.last_error_message = None
     else:
+        for active_session in active_sessions:
+            _supersede_onboarding_session(
+                session_to_supersede=active_session,
+                replacement_session_id=None,
+            )
+        await session.flush()
         replacement_session = onboarding_repository.add(
             user_id=user_id,
             status="extracting",
             current_step="extraction",
         )
         await session.flush()
-        onboarding_session.status = "superseded"
-        onboarding_session.superseded_by_session_id = replacement_session.id
+        for active_session in active_sessions:
+            active_session.superseded_by_session_id = replacement_session.id
         onboarding_session = replacement_session
 
     workflow_run = repository.add(

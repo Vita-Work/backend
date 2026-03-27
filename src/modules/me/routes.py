@@ -114,6 +114,56 @@ async def _build_user_search_job_response(
     return response.model_copy(update={"jobs": enriched_jobs})
 
 
+async def _build_user_search_job_responses(
+    *,
+    session: AsyncSession,
+    user_id: str,
+    workflow_runs: list,
+) -> list[SearchJobWorkflowRunResponse]:
+    if not workflow_runs:
+        return []
+
+    repository = TrackedJobsRepository(session=session)
+    tracked_jobs = await repository.list_jobs_for_user(
+        user_id=user_id,
+        query=JobTrackerListQuery(archived=False),
+    )
+    saved_by_url = {
+        job.source_job_url: job
+        for job in tracked_jobs
+        if job.source_job_url and job.archived_at is None
+    }
+
+    responses: list[SearchJobWorkflowRunResponse] = []
+    for workflow_run in workflow_runs:
+        response = build_search_job_response(workflow_run=workflow_run)
+        enriched_jobs = []
+        for job in response.jobs:
+            normalized_job_url = normalize_job_url(job.job_url) or ""
+            tracked_job = saved_by_url.get(normalized_job_url)
+            site_display_name = {
+                "indeed": "Indeed",
+                "hh": "HH",
+                "habr_career": "Habr Career",
+                "getonbrd": "Get on Board",
+                "computrabajo": "Computrabajo",
+                "linkedin": "LinkedIn",
+            }.get(job.site, job.site.title() if job.site else None)
+            enriched_jobs.append(
+                job.model_copy(
+                    update={
+                        "is_saved_to_tracker": tracked_job is not None,
+                        "tracked_job_id": str(tracked_job.id) if tracked_job is not None else None,
+                        "site_display_name": site_display_name,
+                        "site_logo_key": job.site,
+                        "display_badge_label": job.fit_level.title() if job.fit_level else None,
+                    }
+                )
+            )
+        responses.append(response.model_copy(update={"jobs": enriched_jobs}))
+    return responses
+
+
 @router.get("", response_model=UserResponse)
 async def get_me_route(
     context: AuthContext = user_auth_dependency,
@@ -239,6 +289,7 @@ async def run_my_extraction_route(
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> CvExtractionWorkflowRunResponse:
+    user_id = str(context.user.id)
     try:
         prepared_cv = await intake_cv_for_extraction(upload=file)
         # The authenticated request may already hold a DB connection from auth/session lookups.
@@ -247,7 +298,7 @@ async def run_my_extraction_route(
         workflow_run = await queue_cv_extraction_workflow(
             session=session,
             arq_redis=arq_redis,
-            user_id=str(context.user.id),
+            user_id=user_id,
             prepared_cv=prepared_cv,
             parent_request_id=getattr(request.state, "request_id", None),
         )
@@ -374,6 +425,21 @@ async def run_my_search_jobs_route(
         session=session,
         user_id=str(context.user.id),
         workflow_run=workflow_run,
+    )
+
+
+@router.get("/search-jobs/runs", response_model=list[SearchJobWorkflowRunResponse])
+async def list_my_search_job_runs_route(
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> list[SearchJobWorkflowRunResponse]:
+    workflow_runs = await SearchJobWorkflowRunsRepository(session=session).list_for_user(
+        user_id=str(context.user.id)
+    )
+    return await _build_user_search_job_responses(
+        session=session,
+        user_id=str(context.user.id),
+        workflow_runs=workflow_runs,
     )
 
 

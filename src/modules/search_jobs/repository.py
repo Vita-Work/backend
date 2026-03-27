@@ -40,6 +40,15 @@ class SearchJobWorkflowRunsRepository:
         )
         return list(result.scalars().all())
 
+    async def list_for_user(self, *, user_id: str) -> list[SearchJobWorkflowRun]:
+        """Return one user's search-job workflow runs ordered by newest first."""
+        result = await self.session.execute(
+            select(SearchJobWorkflowRun)
+            .where(SearchJobWorkflowRun.user_id == user_id)
+            .order_by(desc(SearchJobWorkflowRun.created_at))
+        )
+        return list(result.scalars().all())
+
     async def get_latest_for_onboarding_session(
         self,
         *,
