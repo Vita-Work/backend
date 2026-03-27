@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     auth_email_resend_cooldown_seconds: int = 60
     auth_email_requests_per_hour: int = 5
     auth_session_touch_interval_seconds: int = 300
-    app_base_url: str = "http://127.0.0.1:8000"
+    app_base_url: str = "http://localhost:8000"
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_reply_to: str | None = None

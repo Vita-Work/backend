@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
 from src.db.engine import get_db_session
+from src.logger import get_logger
 from src.modules.auth.repository import AuthRepository
 from src.modules.auth.security import hash_session_token, utcnow
 from src.modules.users.models import User
 from src.modules.users.repository import UsersRepository
 
 settings = get_settings()
+logger = get_logger("auth.dependencies")
 db_session_dependency = Depends(get_db_session)
 
 
@@ -77,6 +79,7 @@ async def get_current_auth_context_optional(
         cookies.append((user_cookie, "user", settings.auth_cookie_name_user))
 
     if not cookies:
+        logger.debug("auth_cookies_missing")
         return None
 
     auth_repository = AuthRepository(session=session)
@@ -84,18 +87,46 @@ async def get_current_auth_context_optional(
     now = utcnow()
 
     for raw_token, expected_role, cookie_name in cookies:
+        logger.debug("verifying_cookie", cookie_name=cookie_name, role=expected_role)
         auth_session = await auth_repository.get_session_by_token_hash(
             session_token_hash=hash_session_token(raw_token)
         )
         if auth_session is None:
+            logger.debug("auth_session_not_found", cookie_name=cookie_name)
             continue
-        if auth_session.revoked_at is not None or auth_session.expires_at < now:
+        if auth_session.revoked_at is not None:
+            logger.debug("auth_session_revoked", session_id=auth_session.id)
+            continue
+        if auth_session.expires_at < now:
+            logger.debug(
+                "auth_session_expired",
+                session_id=auth_session.id,
+                expires_at=auth_session.expires_at,
+            )
             continue
         if auth_session.role_snapshot != expected_role:
+            logger.debug(
+                "auth_role_mismatch",
+                session_id=auth_session.id,
+                expected=expected_role,
+                actual=auth_session.role_snapshot,
+            )
             continue
 
         user = await users_repository.get_by_id(user_id=UUID(auth_session.user_id))
-        if user is None or user.status != "active" or user.role != expected_role:
+        if user is None:
+            logger.debug("auth_user_not_found", user_id=auth_session.user_id)
+            continue
+        if user.status != "active":
+            logger.debug("auth_user_not_active", user_id=user.id, status=user.status)
+            continue
+        if user.role != expected_role:
+            logger.debug(
+                "auth_user_role_mismatch",
+                user_id=user.id,
+                expected=expected_role,
+                actual=user.role,
+            )
             continue
 
         last_seen_at = auth_session.last_seen_at or auth_session.created_at
@@ -103,6 +134,7 @@ async def get_current_auth_context_optional(
             auth_session.last_seen_at = now
             await session.commit()
 
+        logger.debug("auth_success", user_id=user.id, role=expected_role)
         return AuthContext(
             user=user,
             session_id=str(auth_session.id),
@@ -110,6 +142,7 @@ async def get_current_auth_context_optional(
             cookie_name=cookie_name,
         )
 
+    logger.debug("auth_failed_all_cookies_invalid")
     return None
 
 
