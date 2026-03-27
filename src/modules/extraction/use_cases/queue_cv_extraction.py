@@ -55,13 +55,14 @@ async def queue_cv_extraction_workflow(
         onboarding_session.extraction_model = None
         onboarding_session.last_error_message = None
     else:
+        onboarding_session.status = "superseded"
+        await session.flush()
         replacement_session = onboarding_repository.add(
             user_id=user_id,
             status="extracting",
             current_step="extraction",
         )
         await session.flush()
-        onboarding_session.status = "superseded"
         onboarding_session.superseded_by_session_id = replacement_session.id
         onboarding_session = replacement_session
 

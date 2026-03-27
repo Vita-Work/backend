@@ -239,6 +239,7 @@ async def run_my_extraction_route(
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> CvExtractionWorkflowRunResponse:
+    user_id = str(context.user.id)
     try:
         prepared_cv = await intake_cv_for_extraction(upload=file)
         # The authenticated request may already hold a DB connection from auth/session lookups.
@@ -247,7 +248,7 @@ async def run_my_extraction_route(
         workflow_run = await queue_cv_extraction_workflow(
             session=session,
             arq_redis=arq_redis,
-            user_id=str(context.user.id),
+            user_id=user_id,
             prepared_cv=prepared_cv,
             parent_request_id=getattr(request.state, "request_id", None),
         )
@@ -324,7 +325,12 @@ async def stream_my_extraction_run_events_route(
                 )
                 yield _sse_event(event=item.event_type, data=payload.model_dump(mode="json"))
             workflow_run_latest = await repository.get_by_id(workflow_run_id=workflow_run_id)
-            if workflow_run_latest is None or workflow_run_latest.status in {"completed", "failed"}:
+            if workflow_run_latest is None or workflow_run_latest.status in {
+                "awaiting_clarification",
+                "awaiting_confirmation",
+                "completed",
+                "failed",
+            }:
                 terminal = (
                     build_extraction_response(workflow_run=workflow_run_latest)
                     if workflow_run_latest
