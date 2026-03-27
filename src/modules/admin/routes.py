@@ -5,6 +5,7 @@ from uuid import UUID
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.engine import get_db_session
 from src.extensions.arq.client import get_arq_redis
@@ -273,6 +274,10 @@ async def run_extraction_for_user_admin_route(
 ):
     try:
         prepared_cv = await intake_cv_for_extraction(upload=file)
+        # The request may have already touched the DB during admin auth.
+        # Reset the session after long-running upload/storage I/O so queueing
+        # the workflow checks out a fresh connection for the transactional write.
+        await session.rollback()
         workflow_run = await queue_cv_extraction_workflow(
             session=session,
             arq_redis=arq_redis,
@@ -293,6 +298,11 @@ async def run_extraction_for_user_admin_route(
     except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is temporarily unavailable.",
         ) from exc
     return build_extraction_response(workflow_run=workflow_run)
 
@@ -343,6 +353,7 @@ async def delete_search_job_run_admin_route(
 async def run_search_jobs_for_user_admin_route(
     user_id: UUID,
     request: Request,
+    monitoring_mode: bool = False,
     _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
@@ -352,6 +363,7 @@ async def run_search_jobs_for_user_admin_route(
             session=session,
             arq_redis=arq_redis,
             user_id=str(user_id),
+            monitoring_mode=monitoring_mode,
             parent_request_id=getattr(request.state, "request_id", None),
         )
     except SearchJobWorkflowNotReadyError as exc:

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +32,12 @@ class SearchJobWorkflowRun(Base, BaseMixin):
     hard_preferences: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     soft_preferences: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     source_sites: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    monitoring_mode: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     total_site_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_jobs_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -83,3 +89,62 @@ class SearchJobProgressEvent(Base, BaseMixin):
     display_color_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     site_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class SearchJobSeenJob(Base, BaseMixin):
+    """Per-user memory of jobs already delivered by search-job monitoring."""
+
+    __tablename__ = "search_job_seen_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "canonical_job_url", name="uq_search_job_seen_jobs_user_job"),
+    )
+
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    workflow_run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+    site: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    canonical_job_url: Mapped[str] = mapped_column(Text, nullable=False)
+    job_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_scraped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    first_seen_by_user_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    last_seen_by_user_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    first_delivered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    last_delivered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    times_seen: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    times_delivered: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )

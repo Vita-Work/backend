@@ -25,6 +25,7 @@ async def finalize_search_results_node(state: SearchJobState) -> dict[str, objec
         notes=state.get("batch_notes", []),
         listing_candidates_count=len(state.get("listing_candidates", [])),
         detailed_jobs_count=len(state.get("deduped_details", [])),
+        monitoring_mode=state.get("monitoring_mode", False),
     )
     logger.info(
         "search_job_finalize_completed",
@@ -88,6 +89,7 @@ def _build_summary_markdown(
     notes: list[str],
     listing_candidates_count: int,
     detailed_jobs_count: int,
+    monitoring_mode: bool,
 ) -> str:
     skipped_sites = [result.site for result in site_results if result.status == "skipped"]
     fit_counts = Counter(job.fit_level for job in jobs)
@@ -105,6 +107,7 @@ def _build_summary_markdown(
     top_block = "\n".join(top_lines) if top_lines else "- None"
     return (
         "# Search Job Summary\n\n"
+        f"- Monitoring mode: {'on' if monitoring_mode else 'off'}\n"
         f"- Site results: {len(site_results)}\n"
         f"- Listing candidates collected: {listing_candidates_count}\n"
         f"- Detailed jobs kept: {detailed_jobs_count}\n"

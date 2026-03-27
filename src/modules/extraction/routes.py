@@ -2,6 +2,7 @@ from uuid import UUID
 
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.engine import get_db_session
@@ -135,6 +136,9 @@ async def upload_cv_and_run_extraction(
     """Accept a CV upload and queue the extraction workflow."""
     try:
         prepared_cv = await intake_cv_for_extraction(upload=file)
+        # Admin auth may already have opened a DB transaction before the upload/storage work.
+        # Reset the session so the workflow queueing step uses a fresh database connection.
+        await session.rollback()
         workflow_run = await queue_cv_extraction_workflow(
             session=session,
             arq_redis=arq_redis,
@@ -156,6 +160,11 @@ async def upload_cv_and_run_extraction(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is temporarily unavailable.",
         ) from exc
 
     return _build_workflow_run_response(workflow_run=workflow_run)

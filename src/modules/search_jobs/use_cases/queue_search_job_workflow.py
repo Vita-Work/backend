@@ -28,6 +28,7 @@ async def queue_search_job_workflow(
     session: AsyncSession,
     arq_redis: ArqRedis,
     user_id: str,
+    monitoring_mode: bool = False,
     parent_request_id: str | None = None,
 ) -> SearchJobWorkflowRun:
     """Persist and enqueue a search-job workflow run."""
@@ -41,6 +42,25 @@ async def queue_search_job_workflow(
     context = build_search_job_context(onboarding_session=onboarding_session)
     source_sites = get_registered_parser_names()
     repository = SearchJobWorkflowRunsRepository(session=session)
+    existing_run = await repository.get_latest_active_for_onboarding_session(
+        onboarding_session_id=onboarding_session.id,
+        monitoring_mode=monitoring_mode,
+    )
+    if existing_run is not None:
+        logger.info(
+            "search_job_workflow_reusing_active_run",
+            workflow_run_id=existing_run.id,
+            onboarding_session_id=existing_run.onboarding_session_id,
+            user_id=existing_run.user_id,
+            monitoring_mode=existing_run.monitoring_mode,
+            status=existing_run.status,
+        )
+        return await _enqueue_existing_workflow_run(
+            session=session,
+            arq_redis=arq_redis,
+            workflow_run=existing_run,
+            parent_request_id=parent_request_id,
+        )
 
     workflow_run = repository.add(
         user_id=user_id,
@@ -49,6 +69,7 @@ async def queue_search_job_workflow(
         hard_preferences=context.hard_preferences,
         soft_preferences=context.soft_preferences,
         source_sites=source_sites,
+        monitoring_mode=monitoring_mode,
     )
     await session.flush()
     update_search_progress(

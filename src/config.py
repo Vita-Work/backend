@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str | None = None
+    redis_conn_timeout_seconds: int = 5
+    redis_conn_retries: int = 10
+    redis_conn_retry_delay_seconds: int = 2
+    redis_max_connections: int | None = 100
+    redis_retry_on_timeout: bool = True
     arq_max_jobs: int = 50
     arq_max_tries: int = 1
     arq_job_timeout: int = 600
@@ -52,6 +57,7 @@ class Settings(BaseSettings):
     search_job_detail_max_jobs: int = 24
     search_job_unified_max_jobs: int = 100
     search_job_unified_batch_size: int = 10
+    search_job_monitoring_max_stale_pages_per_query: int = 1
     search_job_listing_embedding_similarity_threshold: float = 0.95
     search_job_detail_embedding_similarity_threshold: float = 0.93
     search_job_embedding_output_dimensionality: int = 128

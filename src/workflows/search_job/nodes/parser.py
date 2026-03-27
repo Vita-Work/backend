@@ -63,6 +63,10 @@ async def source_worker_node(state: SearchJobState) -> dict[str, object]:
                     salary_from=plan.salary_from,
                     max_pages=settings.search_job_listing_max_pages,
                     max_items=settings.search_job_listing_max_items,
+                    monitoring_mode=state.get("monitoring_mode", False),
+                    seen_job_urls=state.get("seen_job_urls", []),
+                    seen_job_fingerprints=state.get("seen_job_fingerprints", []),
+                    max_stale_pages=settings.search_job_monitoring_max_stale_pages_per_query,
                 )
             )
         except Exception as exc:

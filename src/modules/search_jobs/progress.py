@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from src.modules.auth.security import utcnow
 from src.modules.search_jobs.models import SearchJobWorkflowRun
 from src.modules.search_jobs.repository import SearchJobWorkflowRunsRepository
 
@@ -88,6 +88,10 @@ SITE_DISPLAY_NAMES = {
 }
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 def update_search_progress(
     *,
     repository: SearchJobWorkflowRunsRepository,
@@ -104,7 +108,7 @@ def update_search_progress(
     if site_display_name and internal_stage == "searching":
         label = f"Checking {site_display_name}"
         description = f"We are looking through {site_display_name} for matching openings."
-    now = utcnow()
+    now = _utcnow()
     workflow_run.current_internal_stage = internal_stage
     workflow_run.current_display_stage = stage.display_stage
     workflow_run.current_display_label = label

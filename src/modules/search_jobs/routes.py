@@ -40,6 +40,7 @@ def _build_workflow_run_response(
         hard_preferences=workflow_run.hard_preferences or [],
         soft_preferences=workflow_run.soft_preferences or [],
         source_sites=workflow_run.source_sites or [],
+        monitoring_mode=workflow_run.monitoring_mode,
         total_site_results=workflow_run.total_site_results,
         total_jobs_found=workflow_run.total_jobs_found,
         total_jobs_returned=workflow_run.total_jobs_returned,
@@ -86,6 +87,7 @@ async def queue_search_job_route(
             session=session,
             arq_redis=arq_redis,
             user_id=payload.user_id,
+            monitoring_mode=payload.monitoring_mode,
             parent_request_id=getattr(request.state, "request_id", None),
         )
     except SearchJobWorkflowNotReadyError as exc:

@@ -7,9 +7,9 @@ from src.workflows.search_job.dedupe import (
     canonical_job_url,
     cosine_similarity,
     locations_compatible,
-    normalize_text,
     text_similarity,
 )
+from src.workflows.search_job.history import build_job_fingerprint
 from src.workflows.search_job.schemas import DetailFetchCandidate, ListingCandidate
 from src.workflows.search_job.state import SearchJobState
 
@@ -29,9 +29,17 @@ async def listing_dedupe_node(state: SearchJobState) -> dict[str, object]:
     exact_seen: dict[str, DetailFetchCandidate] = {}
     fingerprint_seen: dict[str, DetailFetchCandidate] = {}
     notes: list[str] = []
+    seen_job_urls = set(state.get("seen_job_urls", []))
+    seen_job_fingerprints = set(state.get("seen_job_fingerprints", []))
 
     for candidate in listings:
-        if _should_reject_listing(candidate=candidate, plan=plan):
+        if _should_reject_listing(
+            candidate=candidate,
+            plan=plan,
+            monitoring_mode=state.get("monitoring_mode", False),
+            seen_job_urls=seen_job_urls,
+            seen_job_fingerprints=seen_job_fingerprints,
+        ):
             continue
 
         detail_candidate = DetailFetchCandidate(
@@ -104,7 +112,22 @@ def _should_reject_listing(
     *,
     candidate: ListingCandidate,
     plan,
+    monitoring_mode: bool,
+    seen_job_urls: set[str],
+    seen_job_fingerprints: set[str],
 ) -> bool:
+    if monitoring_mode:
+        canonical_url = canonical_job_url(candidate.job_url)
+        fingerprint = build_job_fingerprint(
+            title=candidate.title,
+            company_name=candidate.company_name,
+            location=candidate.location,
+        )
+        if canonical_url in seen_job_urls:
+            return True
+        if fingerprint is not None and fingerprint in seen_job_fingerprints:
+            return True
+
     haystack = " ".join(
         filter(
             None,
@@ -172,12 +195,11 @@ def _listing_priority_score(*, candidate: DetailFetchCandidate, plan) -> int:
 
 
 def _listing_fingerprint(candidate: DetailFetchCandidate) -> str | None:
-    title = normalize_text(candidate.title)
-    company = normalize_text(candidate.company_name)
-    location = normalize_text(candidate.location)
-    if not title or not company:
-        return None
-    return "|".join([title, company, location])
+    return build_job_fingerprint(
+        title=candidate.title,
+        company_name=candidate.company_name,
+        location=candidate.location,
+    )
 
 
 async def _apply_embedding_dedupe(
