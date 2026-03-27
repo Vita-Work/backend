@@ -54,7 +54,7 @@ def test_run_my_extraction_route_captures_user_id_before_rollback(monkeypatch) -
     )
     monkeypatch.setattr(
         me_routes,
-        "build_extraction_response",
+        "build_extraction_workflow_run_response",
         lambda *, workflow_run: {"workflow_run": workflow_run},
     )
 

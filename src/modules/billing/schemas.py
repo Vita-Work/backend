@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class BillingEntitlementsResponse(BaseModel):
+    plan_code: Literal["free", "pro"]
+    plan_label: str
+    can_access_full_results: bool
+    can_use_daily_monitoring: bool
+    search_results_limit: int | None = None
+
+
+class BillingSubscriptionSummaryResponse(BaseModel):
+    provider: str | None = None
+    status: str | None = None
+    provider_customer_id: str | None = None
+    provider_subscription_id: str | None = None
+    provider_price_id: str | None = None
+    cancel_at_period_end: bool = False
+    current_period_starts_at: datetime | None = None
+    current_period_ends_at: datetime | None = None
+    next_billed_at: datetime | None = None
+    monitoring_enabled: bool = False
+    monitoring_hour_local: int = 9
+    monitoring_minute_local: int = 0
+    monitoring_last_run_local_date: date | None = None
+
+
+class BillingCheckoutConfigResponse(BaseModel):
+    provider: str = "paddle"
+    environment: Literal["sandbox", "production"]
+    enabled: bool
+    client_side_token: str | None = None
+    product_id: str | None = None
+    price_id: str | None = None
+    product_name: str | None = None
+    price_label: str | None = None
+
+
+class BillingOverviewResponse(BaseModel):
+    entitlements: BillingEntitlementsResponse
+    subscription: BillingSubscriptionSummaryResponse
+    checkout: BillingCheckoutConfigResponse
+    monitoring_timezone: str
+    monitoring_schedule_local_label: str
+
+
+class BillingPreferencesUpdateRequest(BaseModel):
+    monitoring_enabled: bool | None = None
+    monitoring_hour_local: int | None = Field(default=None, ge=0, le=23)
+
+
+class PaddleWebhookResponse(BaseModel):
+    success: bool = True

@@ -4,6 +4,8 @@ from arq.connections import ArqRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.logger import get_logger
+from src.modules.billing.repository import BillingSubscriptionsRepository
+from src.modules.billing.service import build_billing_entitlements
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.search_jobs.models import SearchJobWorkflowRun
 from src.modules.search_jobs.progress import update_search_progress
@@ -23,6 +25,10 @@ class SearchJobWorkflowNotReadyError(RuntimeError):
     """Raised when the user has no completed search setup to build from."""
 
 
+class SearchJobMonitoringNotAllowedError(RuntimeError):
+    """Raised when a user without Pro access attempts to use daily monitoring."""
+
+
 async def queue_search_job_workflow(
     *,
     session: AsyncSession,
@@ -32,6 +38,16 @@ async def queue_search_job_workflow(
     parent_request_id: str | None = None,
 ) -> SearchJobWorkflowRun:
     """Persist and enqueue a search-job workflow run."""
+    if monitoring_mode:
+        subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
+            user_id=user_id
+        )
+        entitlements = build_billing_entitlements(subscription=subscription)
+        if not entitlements.can_use_daily_monitoring:
+            raise SearchJobMonitoringNotAllowedError(
+                "Daily monitoring is available on Vitable Pro."
+            )
+
     onboarding_repository = OnboardingSessionsRepository(session=session)
     onboarding_session = await onboarding_repository.get_latest_completed_for_user(user_id=user_id)
     if onboarding_session is None:

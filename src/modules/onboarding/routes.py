@@ -17,13 +17,13 @@ from src.modules.onboarding.use_cases.advance_onboarding_flow import (
 from src.modules.onboarding.use_cases.get_active_onboarding_session import (
     get_active_onboarding_session,
 )
+from src.modules.onboarding.use_cases.respond_onboarding_flow import respond_onboarding_flow
 from src.modules.onboarding.use_cases.restart_onboarding_session import (
     restart_onboarding_session,
 )
 from src.modules.search_jobs.use_cases.queue_search_job_workflow import (
     SearchJobWorkflowEnqueueError,
     SearchJobWorkflowNotReadyError,
-    queue_search_job_workflow,
 )
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
@@ -70,11 +70,13 @@ async def restart_onboarding_session_route(
     return OnboardingSessionResponse.model_validate(onboarding_session)
 
 
-async def _advance_onboarding_flow(
+@router.post("/users/{user_id}/run", response_model=OnboardingSessionResponse)
+async def run_onboarding_flow_route(
     user_id: str,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
-    """Advance onboarding until the next prompt or completion."""
+    """Advance the active onboarding flow until the next human prompt or completion."""
     try:
         onboarding_session = await advance_onboarding_flow(
             session=session,
@@ -94,16 +96,19 @@ async def _advance_onboarding_flow(
     return OnboardingSessionResponse.model_validate(onboarding_session)
 
 
-async def _resume_onboarding_flow(
+@router.post("/users/{user_id}/respond", response_model=OnboardingSessionResponse)
+async def respond_to_onboarding_prompt_route(
     user_id: str,
     payload: SubmitOnboardingAnswerRequest,
+    _: AuthContext = admin_dependency,
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingSessionResponse:
-    """Resume onboarding with the user's latest answer."""
+    """Resume the active onboarding flow with the user's latest answer."""
     try:
-        onboarding_session = await advance_onboarding_flow(
+        onboarding_session = await respond_onboarding_flow(
             session=session,
+            arq_redis=arq_redis,
             user_id=user_id,
             answer=payload.answer,
         )
@@ -117,44 +122,10 @@ async def _resume_onboarding_flow(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-    if onboarding_session.status == "completed":
-        try:
-            await queue_search_job_workflow(
-                session=session,
-                arq_redis=arq_redis,
-                user_id=user_id,
-            )
-        except (SearchJobWorkflowEnqueueError, SearchJobWorkflowNotReadyError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
-            ) from exc
+    except (SearchJobWorkflowEnqueueError, SearchJobWorkflowNotReadyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
     return OnboardingSessionResponse.model_validate(onboarding_session)
-
-
-@router.post("/users/{user_id}/run", response_model=OnboardingSessionResponse)
-async def run_onboarding_flow_route(
-    user_id: str,
-    _: AuthContext = admin_dependency,
-    session: AsyncSession = db_session_dependency,
-) -> OnboardingSessionResponse:
-    """Advance the active onboarding flow until the next human prompt or completion."""
-    return await _advance_onboarding_flow(user_id=user_id, session=session)
-
-
-@router.post("/users/{user_id}/respond", response_model=OnboardingSessionResponse)
-async def respond_to_onboarding_prompt_route(
-    user_id: str,
-    payload: SubmitOnboardingAnswerRequest,
-    _: AuthContext = admin_dependency,
-    session: AsyncSession = db_session_dependency,
-    arq_redis: ArqRedis = arq_redis_dependency,
-) -> OnboardingSessionResponse:
-    """Resume the active onboarding flow with the user's latest answer."""
-    return await _resume_onboarding_flow(
-        user_id=user_id,
-        payload=payload,
-        session=session,
-        arq_redis=arq_redis,
-    )

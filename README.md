@@ -7,6 +7,7 @@ Backend template for Vita-style services.
 - [`docs/overview.md`](/Users/aidin/Projects/vita/backend/docs/overview.md)
 - [`docs/cv-extraction.md`](/Users/aidin/Projects/vita/backend/docs/cv-extraction.md)
 - [`docs/search-setup-architecture.md`](/Users/aidin/Projects/vita/backend/docs/search-setup-architecture.md)
+- [`docs/billing-subscriptions.md`](/Users/aidin/Projects/vita/backend/docs/billing-subscriptions.md)
 - [`docs/branch-changes.md`](/Users/aidin/Projects/vita/backend/docs/branch-changes.md)
 
 ## Environment setup
@@ -23,6 +24,14 @@ Required for the CV extraction flow:
 - `S3_ACCESS_KEY_ID`
 - `S3_SECRET_ACCESS_KEY`
 - `GEMINI_API_KEY`
+
+Required for subscriptions and Paddle checkout:
+
+- `PADDLE_ENVIRONMENT`
+- `PADDLE_CLIENT_SIDE_TOKEN`
+- `PADDLE_PRODUCT_ID_PRO`
+- `PADDLE_PRICE_ID_PRO_MONTHLY`
+- `PADDLE_WEBHOOK_SECRET`
 
 ## Development
 
@@ -52,6 +61,26 @@ Run the ARQ worker:
 ```bash
 uv run arq src.extensions.arq.arq_common.WorkerSettings
 ```
+
+Billing and monitoring rely on the worker for scheduled monitoring runs.
+
+The frontend expects the backend app-state routes to line up with these user routes:
+
+- `/onboarding`
+- `/onboarding/processing`
+- `/onboarding/chat`
+- `/searching`
+- `/results`
+
+If you change user-facing routes on the frontend, update `src/modules/me/frontend_state.py` at the same time so session restore and auth redirects stay correct.
+
+Keep backend route handlers thin:
+
+- route modules should not import private helper functions from sibling route modules
+- shared response builders belong in presenter modules
+- cross-module orchestration belongs in explicit use-case modules
+
+That keeps HTTP wiring separate from reusable application logic and avoids brittle route-to-route coupling.
 
 Useful health checks:
 
@@ -89,3 +118,7 @@ The main user-facing flow is:
 4. `POST /onboarding/users/{user_id}/respond`
 
 `respond` is used for both clarification answers and final confirmation.
+
+## Billing flow
+
+The subscription architecture is documented in [`docs/billing-subscriptions.md`](/Users/aidin/Projects/vita/backend/docs/billing-subscriptions.md).

@@ -10,6 +10,8 @@ from src.middleware import RequestContextMiddleware
 from src.modules.admin.routes import router as admin_router
 from src.modules.auth.bootstrap import bootstrap_admin_users
 from src.modules.auth.routes import router as auth_router
+from src.modules.billing.me_routes import router as billing_me_router
+from src.modules.billing.routes import router as billing_router
 from src.modules.job_tracker.admin_routes import router as job_tracker_admin_router
 from src.modules.job_tracker.me_routes import router as job_tracker_me_router
 from src.modules.me.routes import router as me_router
@@ -68,6 +70,7 @@ def create_app() -> FastAPI:
             "http://localhost:5173",
             "http://127.0.0.1:5173",
         ],
+        allow_origin_regex=r"https://.*\.trycloudflare\.com",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -99,6 +102,8 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(me_router)
+    app.include_router(billing_me_router)
+    app.include_router(billing_router)
     app.include_router(admin_router)
     app.include_router(onboarding_router)
     app.include_router(job_tracker_me_router)
