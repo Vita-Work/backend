@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     auth_email_resend_cooldown_seconds: int = 60
     auth_email_requests_per_hour: int = 5
     auth_session_touch_interval_seconds: int = 300
-    app_base_url: str = "http://localhost:8000"
+    app_base_url: str = "http://localhost:8080"
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_reply_to: str | None = None
@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     paddle_webhook_secret: str | None = None
     paddle_webhook_tolerance_seconds: int = 300
     billing_free_job_limit: int = 3
+    resume_intake_ttl_hours: int = 24
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

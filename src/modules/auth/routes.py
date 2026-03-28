@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,10 @@ from src.modules.auth.dependencies import (
     clear_auth_cookie,
     get_current_auth_context_optional,
     set_auth_cookie,
+)
+from src.modules.auth.email_templates import (
+    render_sign_in_code_email,
+    render_sign_in_code_text,
 )
 from src.modules.auth.repository import AuthRepository
 from src.modules.auth.schemas import (
@@ -131,17 +136,18 @@ async def request_email_code_route(
     logger.info("challenge_created", email=email)
 
     resend = ResendClient()
-    verification_url = f"{settings.app_base_url.rstrip('/')}/verify?email={email}"
-    html = (
-        f"<p>Your Vita sign-in code is <strong>{code}</strong>.</p>"
-        f"<p>It expires in {settings.auth_email_otp_ttl_minutes} minutes.</p>"
-        f"<p>You can enter it in the app, or continue at "
-        f'<a href="{verification_url}">{verification_url}</a>.</p>'
+    verification_url = (
+        f"{settings.app_base_url.rstrip('/')}/auth/verify?email={quote(email)}&code={quote(code)}"
     )
-    text = (
-        f"Your Vita sign-in code is {code}. "
-        f"It expires in {settings.auth_email_otp_ttl_minutes} minutes. "
-        f"Open {verification_url} to continue."
+    html = render_sign_in_code_email(
+        code=code,
+        verification_url=verification_url,
+        expires_in_minutes=settings.auth_email_otp_ttl_minutes,
+    )
+    text = render_sign_in_code_text(
+        code=code,
+        verification_url=verification_url,
+        expires_in_minutes=settings.auth_email_otp_ttl_minutes,
     )
     try:
         await resend.send_email(
