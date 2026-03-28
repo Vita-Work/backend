@@ -16,6 +16,8 @@ from src.modules.job_tracker.admin_routes import router as job_tracker_admin_rou
 from src.modules.job_tracker.me_routes import router as job_tracker_me_router
 from src.modules.me.routes import router as me_router
 from src.modules.onboarding.routes import router as onboarding_router
+from src.modules.resume_intakes.routes import me_router as resume_intakes_me_router
+from src.modules.resume_intakes.routes import public_router as resume_intakes_public_router
 from src.workflows.search_setup.runtime import (
     start_search_setup_runtime,
     stop_search_setup_runtime,
@@ -71,6 +73,8 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:5173",
             "http://localhost:8080",
             "http://127.0.0.1:8080",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
         ],
         allow_origin_regex=r"https://.*\.trycloudflare\.com",
         allow_credentials=True,
@@ -103,7 +107,9 @@ def create_app() -> FastAPI:
         return {"status": "ok", "database": "ok"}
 
     app.include_router(auth_router)
+    app.include_router(resume_intakes_public_router)
     app.include_router(me_router)
+    app.include_router(resume_intakes_me_router)
     app.include_router(billing_me_router)
     app.include_router(billing_router)
     app.include_router(admin_router)

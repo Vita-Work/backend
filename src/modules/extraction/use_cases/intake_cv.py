@@ -145,6 +145,7 @@ async def intake_cv_for_extraction(
     *,
     upload: UploadFile,
     s3_storage: S3Storage | None = None,
+    storage_namespace: str = "cv",
 ) -> PreparedCvExtractionInput:
     """Persist a CV upload and prepare the next extraction input."""
     settings = get_settings()
@@ -182,7 +183,7 @@ async def intake_cv_for_extraction(
             strategy = _resolve_strategy(buffered_upload.extension)
 
             object_key = storage.build_object_key(
-                namespace="cv",
+                namespace=storage_namespace,
                 filename=buffered_upload.filename,
             )
             stored_object = await storage.upload_path(

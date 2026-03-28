@@ -218,6 +218,61 @@ class S3Storage:
             )
             raise S3StorageError(f"Failed to delete object from S3: {key}") from exc
 
+    async def copy_object(
+        self,
+        *,
+        source_key: str,
+        destination_key: str,
+        content_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> S3ObjectRef:
+        """Copy an existing object within the bucket and return the new stored reference."""
+        try:
+            async with self.client() as client:
+                copy_source = {"Bucket": self.bucket_name, "Key": source_key}
+                extra_args: dict[str, Any] = {
+                    "ContentType": content_type,
+                    "MetadataDirective": "REPLACE",
+                }
+                if metadata:
+                    extra_args["Metadata"] = metadata
+                await client.copy_object(
+                    Bucket=self.bucket_name,
+                    Key=destination_key,
+                    CopySource=copy_source,
+                    **extra_args,
+                )
+                head = await client.head_object(Bucket=self.bucket_name, Key=destination_key)
+        except ClientError as exc:
+            logger.error(
+                "s3_copy_failed",
+                bucket=self.bucket_name,
+                source_key=source_key,
+                destination_key=destination_key,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise S3StorageError(
+                f"Failed to copy object in S3: {source_key} -> {destination_key}"
+            ) from exc
+
+        logger.info(
+            "s3_copy_completed",
+            bucket=self.bucket_name,
+            source_key=source_key,
+            destination_key=destination_key,
+            size_bytes=head.get("ContentLength"),
+            content_type=content_type,
+        )
+        return S3ObjectRef(
+            bucket=self.bucket_name,
+            key=destination_key,
+            content_type=head.get("ContentType"),
+            size_bytes=head.get("ContentLength"),
+            etag=(head.get("ETag") or "").strip('"') or None,
+            version_id=head.get("VersionId"),
+        )
+
 
 @lru_cache(maxsize=1)
 def get_s3_storage() -> S3Storage:

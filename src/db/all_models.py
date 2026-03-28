@@ -8,6 +8,7 @@ from src.modules.billing.models import BillingSubscription, BillingWebhookEvent
 from src.modules.extraction.models import ExtractionProgressEvent, ExtractionWorkflowRun
 from src.modules.job_tracker.models import TrackedJob, TrackedJobActivity, TrackedJobContact
 from src.modules.onboarding.models import OnboardingSession
+from src.modules.resume_intakes.models import ResumeIntake
 from src.modules.search_jobs.models import (
     SearchJobProgressEvent,
     SearchJobSeenJob,
@@ -26,6 +27,7 @@ __all__ = [
     "TrackedJobActivity",
     "TrackedJobContact",
     "OnboardingSession",
+    "ResumeIntake",
     "SearchJobProgressEvent",
     "SearchJobSeenJob",
     "SearchJobWorkflowRun",
