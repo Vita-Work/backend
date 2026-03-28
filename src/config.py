@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_reply_to: str | None = None
+    paddle_environment: Literal["sandbox", "production"] = "sandbox"
+    paddle_client_side_token: str | None = None
+    paddle_product_id_pro: str | None = None
+    paddle_price_id_pro_monthly: str | None = None
+    paddle_webhook_secret: str | None = None
+    paddle_webhook_tolerance_seconds: int = 300
+    billing_free_job_limit: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

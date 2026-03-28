@@ -4,6 +4,7 @@ Import this module explicitly when needed, but avoid importing it during normal 
 """
 
 from src.modules.auth.models import AuthEmailChallenge, AuthSession
+from src.modules.billing.models import BillingSubscription, BillingWebhookEvent
 from src.modules.extraction.models import ExtractionProgressEvent, ExtractionWorkflowRun
 from src.modules.job_tracker.models import TrackedJob, TrackedJobActivity, TrackedJobContact
 from src.modules.onboarding.models import OnboardingSession
@@ -17,6 +18,8 @@ from src.modules.users.models import User
 __all__ = [
     "AuthEmailChallenge",
     "AuthSession",
+    "BillingSubscription",
+    "BillingWebhookEvent",
     "ExtractionProgressEvent",
     "ExtractionWorkflowRun",
     "TrackedJob",

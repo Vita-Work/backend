@@ -44,6 +44,10 @@ class SearchJobWorkflowRunResponse(BaseModel):
     progress_percent: int | None = None
     progress_stage_index: int | None = None
     progress_stage_total: int | None = None
+    billing_plan: str = "free"
+    visible_jobs_count: int = 0
+    hidden_jobs_count: int = 0
+    viewer_job_limit: int | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     last_progress_at: datetime | None = None

@@ -25,6 +25,16 @@ AppPhase = Literal[
     "results_ready",
 ]
 
+PHASE_ROUTES: dict[AppPhase, str] = {
+    "new_user": "/onboarding",
+    "upload_cv": "/onboarding",
+    "processing_cv": "/onboarding/processing",
+    "onboarding_chat": "/onboarding/chat",
+    "awaiting_confirmation": "/onboarding/chat",
+    "searching_jobs": "/searching",
+    "results_ready": "/results",
+}
+
 
 @dataclass
 class AppStateSnapshot:
@@ -39,6 +49,10 @@ class AppStateSnapshot:
     extraction_workflow_run_id: UUID | None = None
     search_job_workflow_run_id: UUID | None = None
     is_new_user: bool = False
+
+
+def route_for_app_phase(phase: AppPhase) -> str:
+    return PHASE_ROUTES[phase]
 
 
 async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppStateSnapshot:
@@ -82,7 +96,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     }:
         return AppStateSnapshot(
             phase="searching_jobs",
-            next_route="/search/new",
+            next_route=route_for_app_phase("searching_jobs"),
             needs_onboarding=not has_completed_onboarding,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -103,7 +117,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     if has_search_results:
         return AppStateSnapshot(
             phase="results_ready",
-            next_route="/search/results",
+            next_route=route_for_app_phase("results_ready"),
             needs_onboarding=False,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -125,7 +139,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         if active_onboarding.status in {"extracting"}:
             return AppStateSnapshot(
                 phase="processing_cv",
-                next_route="/onboarding",
+                next_route=route_for_app_phase("processing_cv"),
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -139,7 +153,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         if active_onboarding.status == "awaiting_confirmation":
             return AppStateSnapshot(
                 phase="awaiting_confirmation",
-                next_route="/onboarding",
+                next_route=route_for_app_phase("awaiting_confirmation"),
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -158,7 +172,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         }:
             return AppStateSnapshot(
                 phase="onboarding_chat",
-                next_route="/onboarding",
+                next_route=route_for_app_phase("onboarding_chat"),
                 needs_onboarding=True,
                 has_active_onboarding_session=True,
                 has_completed_onboarding=has_completed_onboarding,
@@ -173,7 +187,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
     if latest_extraction is not None and latest_extraction.status in {"queued", "extracting"}:
         return AppStateSnapshot(
             phase="processing_cv",
-            next_route="/onboarding",
+            next_route=route_for_app_phase("processing_cv"),
             needs_onboarding=True,
             has_active_onboarding_session=has_active_onboarding_session,
             has_completed_onboarding=has_completed_onboarding,
@@ -187,7 +201,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
 
     return AppStateSnapshot(
         phase="new_user" if is_new_user else "upload_cv",
-        next_route="/onboarding",
+        next_route=route_for_app_phase("new_user" if is_new_user else "upload_cv"),
         needs_onboarding=not has_completed_onboarding,
         has_active_onboarding_session=has_active_onboarding_session,
         has_completed_onboarding=has_completed_onboarding,

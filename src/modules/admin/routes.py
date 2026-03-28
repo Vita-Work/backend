@@ -12,8 +12,8 @@ from src.extensions.arq.client import get_arq_redis
 from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
 from src.modules.auth.dependencies import AuthContext, require_admin
+from src.modules.extraction.presenters import build_extraction_workflow_run_response
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
-from src.modules.extraction.routes import _build_workflow_run_response as build_extraction_response
 from src.modules.extraction.use_cases.get_cv_extraction_run import get_cv_extraction_workflow_run
 from src.modules.extraction.use_cases.intake_cv import (
     CvFileTooLargeError,
@@ -28,8 +28,8 @@ from src.modules.extraction.use_cases.queue_cv_extraction import (
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.onboarding.schemas import OnboardingSessionResponse
 from src.modules.onboarding.use_cases.restart_onboarding_session import restart_onboarding_session
+from src.modules.search_jobs.presenters import build_search_job_workflow_run_response
 from src.modules.search_jobs.repository import SearchJobWorkflowRunsRepository
-from src.modules.search_jobs.routes import _build_workflow_run_response as build_search_job_response
 from src.modules.search_jobs.schemas import SearchJobWorkflowRunResponse
 from src.modules.search_jobs.use_cases.get_search_job_run import get_search_job_workflow_run
 from src.modules.search_jobs.use_cases.queue_search_job_workflow import (
@@ -231,7 +231,7 @@ async def list_extraction_runs_admin_route(
     session: AsyncSession = db_session_dependency,
 ):
     runs = await ExtractionWorkflowRunsRepository(session=session).list_all()
-    return [build_extraction_response(workflow_run=run) for run in runs]
+    return [build_extraction_workflow_run_response(workflow_run=run) for run in runs]
 
 
 @router.get("/extraction-runs/{workflow_run_id}")
@@ -245,7 +245,7 @@ async def get_extraction_run_admin_route(
     )
     if workflow_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return build_extraction_response(workflow_run=workflow_run)
+    return build_extraction_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.delete("/extraction-runs/{workflow_run_id}")
@@ -260,7 +260,7 @@ async def delete_extraction_run_admin_route(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
     workflow_run.status = "deleted"
     await session.commit()
-    return build_extraction_response(workflow_run=workflow_run)
+    return build_extraction_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.post("/users/{user_id}/extraction/run", status_code=status.HTTP_202_ACCEPTED)
@@ -304,7 +304,7 @@ async def run_extraction_for_user_admin_route(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is temporarily unavailable.",
         ) from exc
-    return build_extraction_response(workflow_run=workflow_run)
+    return build_extraction_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.get("/search-job-runs", response_model=list[SearchJobWorkflowRunResponse])
@@ -313,7 +313,7 @@ async def list_search_job_runs_admin_route(
     session: AsyncSession = db_session_dependency,
 ) -> list[SearchJobWorkflowRunResponse]:
     runs = await SearchJobWorkflowRunsRepository(session=session).list_all()
-    return [build_search_job_response(workflow_run=run) for run in runs]
+    return [build_search_job_workflow_run_response(workflow_run=run) for run in runs]
 
 
 @router.get("/search-job-runs/{workflow_run_id}", response_model=SearchJobWorkflowRunResponse)
@@ -327,7 +327,7 @@ async def get_search_job_run_admin_route(
     )
     if workflow_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return build_search_job_response(workflow_run=workflow_run)
+    return build_search_job_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.delete("/search-job-runs/{workflow_run_id}", response_model=SearchJobWorkflowRunResponse)
@@ -342,7 +342,7 @@ async def delete_search_job_run_admin_route(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
     workflow_run.status = "deleted"
     await session.commit()
-    return build_search_job_response(workflow_run=workflow_run)
+    return build_search_job_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.post(
@@ -372,4 +372,4 @@ async def run_search_jobs_for_user_admin_route(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
-    return build_search_job_response(workflow_run=workflow_run)
+    return build_search_job_workflow_run_response(workflow_run=workflow_run)

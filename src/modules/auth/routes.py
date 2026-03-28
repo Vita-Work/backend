@@ -118,7 +118,7 @@ async def request_email_code_route(
     code = generate_otp_code(length=settings.auth_email_otp_length)
     code_hash = hash_otp_value(email=email, code=code)
     await auth_repository.invalidate_active_challenges(email=email)
-    auth_repository.add_challenge(
+    challenge = auth_repository.add_challenge(
         email=email,
         code_hash=code_hash,
         expires_at=now + timedelta(minutes=settings.auth_email_otp_ttl_minutes),
@@ -151,6 +151,9 @@ async def request_email_code_route(
             text=text,
         )
     except ResendEmailError as exc:
+        # Avoid leaving a persisted cooldown/OTP behind when the email never left the system.
+        await session.delete(challenge)
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),

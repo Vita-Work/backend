@@ -160,8 +160,17 @@ def test_queue_search_job_workflow_can_enable_monitoring_mode(
             _ = function, args, kwargs
             return object()
 
+    class FakeBillingRepository:
+        def __init__(self, *, session: object) -> None:
+            self.session = session
+
+        async def get_by_user_id(self, *, user_id: str):
+            assert user_id == "user-1"
+            return SimpleNamespace(status="active")
+
     monkeypatch.setattr(queue_module, "OnboardingSessionsRepository", FakeOnboardingRepository)
     monkeypatch.setattr(queue_module, "SearchJobWorkflowRunsRepository", FakeWorkflowRepository)
+    monkeypatch.setattr(queue_module, "BillingSubscriptionsRepository", FakeBillingRepository)
     monkeypatch.setattr(queue_module, "get_registered_parser_names", lambda: ["alpha"])
 
     asyncio.run(
@@ -174,6 +183,36 @@ def test_queue_search_job_workflow_can_enable_monitoring_mode(
     )
 
     assert workflow_repository_state["payload"]["monitoring_mode"] is True
+
+
+def test_queue_search_job_workflow_rejects_monitoring_for_free_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeAsyncSession()
+
+    class FakeBillingRepository:
+        def __init__(self, *, session: object) -> None:
+            self.session = session
+
+        async def get_by_user_id(self, *, user_id: str):
+            assert user_id == "user-1"
+            return None
+
+    class FakeRedis:
+        async def enqueue_job(self, function: str, *args, **kwargs):
+            raise AssertionError("Monitoring should be rejected before enqueueing.")
+
+    monkeypatch.setattr(queue_module, "BillingSubscriptionsRepository", FakeBillingRepository)
+
+    with pytest.raises(queue_module.SearchJobMonitoringNotAllowedError):
+        asyncio.run(
+            queue_module.queue_search_job_workflow(
+                session=session,
+                arq_redis=FakeRedis(),
+                user_id="user-1",
+                monitoring_mode=True,
+            )
+        )
 
 
 def test_queue_search_job_workflow_reuses_active_matching_run(

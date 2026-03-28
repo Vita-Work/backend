@@ -46,11 +46,12 @@ from src.modules.job_tracker.service import (
     create_contact_payload,
     create_status_change_activity_payload,
     create_tracked_job_from_manual_payload,
-    create_tracked_job_from_unified_job,
     normalize_job_url,
 )
-from src.modules.search_jobs.use_cases.get_search_job_run import get_search_job_workflow_run
-from src.workflows.search_job.schemas import UnifiedJob
+from src.modules.job_tracker.use_cases.save_tracked_job_from_search_run import (
+    apply_save_from_search_run_result,
+    save_tracked_job_from_search_run,
+)
 
 router = APIRouter(prefix="/me/job-tracker", tags=["job-tracker"])
 user_auth_dependency = Depends(require_authenticated_user)
@@ -169,76 +170,12 @@ async def save_my_tracked_job_from_search_run_route(
     context: AuthContext = user_auth_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> SaveTrackedJobFromSearchRunResponse:
-    workflow_run = await get_search_job_workflow_run(
+    result = await save_tracked_job_from_search_run(
         session=session,
-        workflow_run_id=payload.workflow_run_id,
+        user_id=str(context.user.id),
+        payload=payload,
     )
-    if workflow_run is None or workflow_run.user_id != str(context.user.id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    if not workflow_run.jobs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No jobs found in workflow run.",
-        )
-
-    selected_job: UnifiedJob | None = None
-    if payload.job_index is not None:
-        if payload.job_index < 0 or payload.job_index >= len(workflow_run.jobs):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        selected_job = UnifiedJob.model_validate(workflow_run.jobs[payload.job_index])
-    else:
-        normalized_target_url = normalize_job_url(payload.job_url)
-        for item in workflow_run.jobs:
-            job = UnifiedJob.model_validate(item)
-            if normalize_job_url(job.job_url) == normalized_target_url:
-                selected_job = job
-                break
-    if selected_job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-
-    repository = TrackedJobsRepository(session=session)
-    normalized_job_url = normalize_job_url(selected_job.job_url)
-    existing = None
-    if normalized_job_url is not None:
-        existing = await repository.get_job_by_user_and_source_url(
-            user_id=str(context.user.id),
-            source_job_url=normalized_job_url,
-        )
-    if existing is not None:
-        response.status_code = status.HTTP_200_OK
-        tracked_job_response = build_tracked_job_response(tracked_job=existing)
-        return SaveTrackedJobFromSearchRunResponse(
-            tracked_job=tracked_job_response,
-            already_saved=True,
-            tracked_job_id=existing.id,
-            tracker_status=existing.status,
-        )
-
-    tracked_job = repository.add_job(
-        **create_tracked_job_from_unified_job(
-            user_id=str(context.user.id),
-            workflow_run_id=payload.workflow_run_id,
-            job=selected_job,
-        )
-    )
-    await session.flush()
-    repository.add_activity(
-        **create_status_change_activity_payload(
-            user_id=str(context.user.id),
-            tracked_job_id=tracked_job.id,
-            from_status=None,
-            to_status=tracked_job.status,
-        )
-    )
-    await session.commit()
-    await session.refresh(tracked_job)
-    tracked_job_response = build_tracked_job_response(tracked_job=tracked_job)
-    return SaveTrackedJobFromSearchRunResponse(
-        tracked_job=tracked_job_response,
-        already_saved=False,
-        tracked_job_id=tracked_job.id,
-        tracker_status=tracked_job.status,
-    )
+    return apply_save_from_search_run_result(response=response, result=result)
 
 
 @router.get("/jobs/{tracked_job_id}", response_model=TrackedJobDetailResponse)

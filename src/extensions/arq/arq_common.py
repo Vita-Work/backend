@@ -1,8 +1,10 @@
+from arq import cron
 from arq.connections import RedisSettings
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from src.config import get_settings
+from src.extensions.arq.jobs.billing import enqueue_due_monitoring_runs
 from src.extensions.arq.jobs.extraction import process_cv_extraction_workflow
 from src.extensions.arq.jobs.search_jobs import process_search_job_workflow
 from src.logger import configure_logging, get_logger
@@ -68,7 +70,21 @@ async def on_shutdown(ctx: dict) -> None:
 class WorkerSettings:
     """Default ARQ worker settings for the project template."""
 
-    functions = [process_cv_extraction_workflow, process_search_job_workflow]
+    functions = [
+        process_cv_extraction_workflow,
+        process_search_job_workflow,
+        enqueue_due_monitoring_runs,
+    ]
+    cron_jobs = [
+        cron(
+            enqueue_due_monitoring_runs,
+            name="enqueue_due_monitoring_runs",
+            minute=5,
+            second=0,
+            microsecond=0,
+            unique=True,
+        )
+    ]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = REDIS_SETTINGS

@@ -14,8 +14,8 @@ from src.extensions.arq.client import get_arq_redis
 from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
 from src.modules.auth.dependencies import AuthContext, require_authenticated_user
+from src.modules.extraction.presenters import build_extraction_workflow_run_response
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
-from src.modules.extraction.routes import _build_workflow_run_response as build_extraction_response
 from src.modules.extraction.schemas import (
     CvExtractionWorkflowRunResponse,
     ExtractionProgressEventResponse,
@@ -31,29 +31,34 @@ from src.modules.extraction.use_cases.queue_cv_extraction import (
     WorkflowEnqueueError,
     queue_cv_extraction_workflow,
 )
-from src.modules.job_tracker.repository import TrackedJobsRepository
-from src.modules.job_tracker.schemas import JobTrackerListQuery
-from src.modules.job_tracker.service import normalize_job_url
 from src.modules.me.frontend_state import build_app_state_snapshot, build_onboarding_thread
 from src.modules.me.schemas import MeAppStateResponse
-from src.modules.onboarding.routes import _advance_onboarding_flow, _resume_onboarding_flow
 from src.modules.onboarding.schemas import (
     OnboardingRespondResponse,
     OnboardingSessionResponse,
     OnboardingThreadResponse,
     SubmitOnboardingAnswerRequest,
 )
+from src.modules.onboarding.use_cases.advance_onboarding_flow import (
+    ActiveOnboardingSessionNotFoundError,
+    OnboardingFlowNotReadyError,
+    advance_onboarding_flow,
+)
 from src.modules.onboarding.use_cases.get_active_onboarding_session import (
     get_active_onboarding_session,
 )
+from src.modules.onboarding.use_cases.respond_onboarding_flow import respond_onboarding_flow
 from src.modules.search_jobs.repository import SearchJobWorkflowRunsRepository
-from src.modules.search_jobs.routes import _build_workflow_run_response as build_search_job_response
 from src.modules.search_jobs.schemas import (
     SearchJobProgressEventResponse,
     SearchJobWorkflowRunResponse,
 )
+from src.modules.search_jobs.use_cases.build_user_search_job_run_response import (
+    build_user_search_job_run_response,
+)
 from src.modules.search_jobs.use_cases.get_search_job_run import get_search_job_workflow_run
 from src.modules.search_jobs.use_cases.queue_search_job_workflow import (
+    SearchJobMonitoringNotAllowedError,
     SearchJobWorkflowEnqueueError,
     SearchJobWorkflowNotReadyError,
     queue_search_job_workflow,
@@ -71,49 +76,6 @@ def _sse_event(*, event: str, data: dict[str, object]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
-async def _build_user_search_job_response(
-    *,
-    session: AsyncSession,
-    user_id: str,
-    workflow_run,
-) -> SearchJobWorkflowRunResponse:
-    response = build_search_job_response(workflow_run=workflow_run)
-    repository = TrackedJobsRepository(session=session)
-    tracked_jobs = await repository.list_jobs_for_user(
-        user_id=user_id,
-        query=JobTrackerListQuery(archived=False),
-    )
-    saved_by_url = {
-        job.source_job_url: job
-        for job in tracked_jobs
-        if job.source_job_url and job.archived_at is None
-    }
-    enriched_jobs = []
-    for job in response.jobs:
-        normalized_job_url = normalize_job_url(job.job_url) or ""
-        tracked_job = saved_by_url.get(normalized_job_url)
-        site_display_name = {
-            "indeed": "Indeed",
-            "hh": "HH",
-            "habr_career": "Habr Career",
-            "getonbrd": "Get on Board",
-            "computrabajo": "Computrabajo",
-            "linkedin": "LinkedIn",
-        }.get(job.site, job.site.title() if job.site else None)
-        enriched_jobs.append(
-            job.model_copy(
-                update={
-                    "is_saved_to_tracker": tracked_job is not None,
-                    "tracked_job_id": str(tracked_job.id) if tracked_job is not None else None,
-                    "site_display_name": site_display_name,
-                    "site_logo_key": job.site,
-                    "display_badge_label": job.fit_level.title() if job.fit_level else None,
-                }
-            )
-        )
-    return response.model_copy(update={"jobs": enriched_jobs})
-
-
 async def _build_user_search_job_responses(
     *,
     session: AsyncSession,
@@ -123,44 +85,15 @@ async def _build_user_search_job_responses(
     if not workflow_runs:
         return []
 
-    repository = TrackedJobsRepository(session=session)
-    tracked_jobs = await repository.list_jobs_for_user(
-        user_id=user_id,
-        query=JobTrackerListQuery(archived=False),
-    )
-    saved_by_url = {
-        job.source_job_url: job
-        for job in tracked_jobs
-        if job.source_job_url and job.archived_at is None
-    }
-
     responses: list[SearchJobWorkflowRunResponse] = []
     for workflow_run in workflow_runs:
-        response = build_search_job_response(workflow_run=workflow_run)
-        enriched_jobs = []
-        for job in response.jobs:
-            normalized_job_url = normalize_job_url(job.job_url) or ""
-            tracked_job = saved_by_url.get(normalized_job_url)
-            site_display_name = {
-                "indeed": "Indeed",
-                "hh": "HH",
-                "habr_career": "Habr Career",
-                "getonbrd": "Get on Board",
-                "computrabajo": "Computrabajo",
-                "linkedin": "LinkedIn",
-            }.get(job.site, job.site.title() if job.site else None)
-            enriched_jobs.append(
-                job.model_copy(
-                    update={
-                        "is_saved_to_tracker": tracked_job is not None,
-                        "tracked_job_id": str(tracked_job.id) if tracked_job is not None else None,
-                        "site_display_name": site_display_name,
-                        "site_logo_key": job.site,
-                        "display_badge_label": job.fit_level.title() if job.fit_level else None,
-                    }
-                )
+        responses.append(
+            await build_user_search_job_run_response(
+                session=session,
+                user_id=user_id,
+                workflow_run=workflow_run,
             )
-        responses.append(response.model_copy(update={"jobs": enriched_jobs}))
+        )
     return responses
 
 
@@ -219,7 +152,23 @@ async def run_my_onboarding_route(
     context: AuthContext = user_auth_dependency,
     session: AsyncSession = db_session_dependency,
 ) -> OnboardingSessionResponse:
-    return await _advance_onboarding_flow(user_id=str(context.user.id), session=session)
+    try:
+        onboarding_session = await advance_onboarding_flow(
+            session=session,
+            user_id=str(context.user.id),
+        )
+    except ActiveOnboardingSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except OnboardingFlowNotReadyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return OnboardingSessionResponse.model_validate(onboarding_session)
 
 
 @router.get("/onboarding/thread", response_model=OnboardingThreadResponse)
@@ -250,12 +199,29 @@ async def respond_my_onboarding_route(
     session: AsyncSession = db_session_dependency,
     arq_redis: ArqRedis = arq_redis_dependency,
 ) -> OnboardingRespondResponse:
-    onboarding_session = await _resume_onboarding_flow(
-        user_id=str(context.user.id),
-        payload=payload,
-        session=session,
-        arq_redis=arq_redis,
-    )
+    try:
+        onboarding_session = await respond_onboarding_flow(
+            session=session,
+            arq_redis=arq_redis,
+            user_id=str(context.user.id),
+            answer=payload.answer,
+        )
+    except ActiveOnboardingSessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except OnboardingFlowNotReadyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except (SearchJobWorkflowEnqueueError, SearchJobWorkflowNotReadyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     latest_search_job_run = await SearchJobWorkflowRunsRepository(
         session=session
     ).get_latest_for_user(user_id=str(context.user.id))
@@ -321,7 +287,7 @@ async def run_my_extraction_route(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is temporarily unavailable.",
         ) from exc
-    return build_extraction_response(workflow_run=workflow_run)
+    return build_extraction_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.get("/extraction/runs/{workflow_run_id}")
@@ -335,7 +301,7 @@ async def get_my_extraction_run_route(
     )
     if workflow_run is None or workflow_run.user_id != str(context.user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return build_extraction_response(workflow_run=workflow_run)
+    return build_extraction_workflow_run_response(workflow_run=workflow_run)
 
 
 @router.get(
@@ -375,9 +341,14 @@ async def stream_my_extraction_run_events_route(
                 )
                 yield _sse_event(event=item.event_type, data=payload.model_dump(mode="json"))
             workflow_run_latest = await repository.get_by_id(workflow_run_id=workflow_run_id)
-            if workflow_run_latest is None or workflow_run_latest.status in {"completed", "failed"}:
+            if workflow_run_latest is None or workflow_run_latest.status in {
+                "awaiting_clarification",
+                "awaiting_confirmation",
+                "completed",
+                "failed",
+            }:
                 terminal = (
-                    build_extraction_response(workflow_run=workflow_run_latest)
+                    build_extraction_workflow_run_response(workflow_run=workflow_run_latest)
                     if workflow_run_latest
                     else None
                 )
@@ -415,13 +386,15 @@ async def run_my_search_jobs_route(
             monitoring_mode=monitoring_mode,
             parent_request_id=getattr(request.state, "request_id", None),
         )
+    except SearchJobMonitoringNotAllowedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except SearchJobWorkflowNotReadyError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except (SearchJobWorkflowEnqueueError, GeminiIntegrationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
-    return await _build_user_search_job_response(
+    return await build_user_search_job_run_response(
         session=session,
         user_id=str(context.user.id),
         workflow_run=workflow_run,
@@ -454,7 +427,7 @@ async def get_my_search_job_run_route(
     )
     if workflow_run is None or workflow_run.user_id != str(context.user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return await _build_user_search_job_response(
+    return await build_user_search_job_run_response(
         session=session,
         user_id=str(context.user.id),
         workflow_run=workflow_run,
@@ -538,7 +511,7 @@ async def stream_my_search_job_progress_route(
             if workflow_run_latest is None or workflow_run_latest.status in {"completed", "failed"}:
                 terminal_payload = (
                     (
-                        await _build_user_search_job_response(
+                        await build_user_search_job_run_response(
                             session=session,
                             user_id=str(context.user.id),
                             workflow_run=workflow_run_latest,

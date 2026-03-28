@@ -42,12 +42,20 @@ def test_create_user_normalizes_fields_and_persists(monkeypatch: pytest.MonkeyPa
             full_name: str | None,
             timezone: str,
             locale: str | None,
+            role: str,
+            password_hash: str | None,
+            email_verified_at,
+            status: str,
         ):
             repository_state["added_payload"] = {
                 "email": email,
                 "full_name": full_name,
                 "timezone": timezone,
                 "locale": locale,
+                "role": role,
+                "password_hash": password_hash,
+                "email_verified_at": email_verified_at,
+                "status": status,
             }
             return SimpleNamespace(
                 id=uuid4(),
@@ -77,6 +85,10 @@ def test_create_user_normalizes_fields_and_persists(monkeypatch: pytest.MonkeyPa
         "full_name": "Test User",
         "timezone": "UTC",
         "locale": "ru",
+        "role": "user",
+        "password_hash": None,
+        "email_verified_at": None,
+        "status": "active",
     }
     assert session.commit_calls == 1
     assert session.refresh_calls == [user]
@@ -104,6 +116,10 @@ def test_create_user_raises_for_duplicate_email(monkeypatch: pytest.MonkeyPatch)
             full_name: str | None,
             timezone: str,
             locale: str | None,
+            role: str,
+            password_hash: str | None,
+            email_verified_at,
+            status: str,
         ):
             raise AssertionError("add should not be called when email already exists")
 
@@ -150,6 +166,10 @@ def test_create_user_maps_integrity_error_to_duplicate_email(
             full_name: str | None,
             timezone: str,
             locale: str | None,
+            role: str,
+            password_hash: str | None,
+            email_verified_at,
+            status: str,
         ):
             return new_user
 
