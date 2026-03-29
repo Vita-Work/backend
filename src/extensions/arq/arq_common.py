@@ -6,6 +6,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from src.config import get_settings
 from src.extensions.arq.jobs.billing import enqueue_due_monitoring_runs
 from src.extensions.arq.jobs.extraction import process_cv_extraction_workflow
+from src.extensions.arq.jobs.job_ai import process_tracked_job_ai_run
 from src.extensions.arq.jobs.search_jobs import process_search_job_workflow
 from src.logger import configure_logging, get_logger
 from src.workflows.search_setup.runtime import (
@@ -73,6 +74,7 @@ class WorkerSettings:
     functions = [
         process_cv_extraction_workflow,
         process_search_job_workflow,
+        process_tracked_job_ai_run,
         enqueue_due_monitoring_runs,
     ]
     cron_jobs = [

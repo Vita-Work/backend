@@ -2,13 +2,32 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.engine import get_db_session
+from src.extensions.arq.client import get_arq_redis
 from src.modules.auth.dependencies import AuthContext, require_authenticated_user
 from src.modules.auth.security import utcnow
+from src.modules.billing.repository import (
+    BillingAccessPassesRepository,
+    BillingSubscriptionsRepository,
+)
+from src.modules.job_ai.repository import TrackedJobAiRunsRepository
+from src.modules.job_ai.schemas import (
+    JobPackArtifactResponse,
+    JobPackPayload,
+    MatchGapArtifactResponse,
+    MatchGapReportPayload,
+    TrackedJobAiRunResponse,
+)
+from src.modules.job_ai.service import (
+    JobAiRunNotAllowedError,
+    queue_job_pack_run,
+    queue_match_gap_run,
+)
 from src.modules.job_tracker.constants import (
     TRACKED_JOB_ACTIVITY_FOLLOW_UP,
     TRACKED_JOB_STATUS_ARCHIVED,
@@ -56,6 +75,7 @@ from src.modules.job_tracker.use_cases.save_tracked_job_from_search_run import (
 router = APIRouter(prefix="/me/job-tracker", tags=["job-tracker"])
 user_auth_dependency = Depends(require_authenticated_user)
 db_session_dependency = Depends(get_db_session)
+arq_redis_dependency = Depends(get_arq_redis)
 
 
 async def _get_owned_tracked_job_or_404(
@@ -197,6 +217,150 @@ async def get_my_tracked_job_route(
         activities=activities,
         contacts=contacts,
     )
+
+
+@router.post(
+    "/jobs/{tracked_job_id}/match-gap/run",
+    response_model=TrackedJobAiRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_match_gap_for_tracked_job_route(
+    tracked_job_id: UUID,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+    arq_redis: ArqRedis = arq_redis_dependency,
+) -> TrackedJobAiRunResponse:
+    user_id = str(context.user.id)
+    await _get_owned_tracked_job_or_404(
+        session=session,
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+    )
+    subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
+        user_id=user_id
+    )
+    access_pass = await BillingAccessPassesRepository(session=session).get_active_for_user(
+        user_id=user_id
+    )
+    try:
+        run = await queue_match_gap_run(
+            session=session,
+            arq_redis=arq_redis,
+            user_id=user_id,
+            tracked_job_id=tracked_job_id,
+            subscription=subscription,
+            access_pass=access_pass,
+            parent_request_id=getattr(context, "request_id", None),
+        )
+    except JobAiRunNotAllowedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return TrackedJobAiRunResponse.model_validate(run)
+
+
+@router.get(
+    "/jobs/{tracked_job_id}/match-gap",
+    response_model=MatchGapArtifactResponse,
+)
+async def get_match_gap_for_tracked_job_route(
+    tracked_job_id: UUID,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> MatchGapArtifactResponse:
+    user_id = str(context.user.id)
+    await _get_owned_tracked_job_or_404(
+        session=session,
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+    )
+    run = await TrackedJobAiRunsRepository(session=session).get_latest_successful_for_job(
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+        run_type="match_gap",
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match report not found.")
+    return MatchGapArtifactResponse(
+        run=TrackedJobAiRunResponse.model_validate(run),
+        report=MatchGapReportPayload.model_validate(run.payload),
+    )
+
+
+@router.post(
+    "/jobs/{tracked_job_id}/job-pack/run",
+    response_model=TrackedJobAiRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_job_pack_for_tracked_job_route(
+    tracked_job_id: UUID,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+    arq_redis: ArqRedis = arq_redis_dependency,
+) -> TrackedJobAiRunResponse:
+    user_id = str(context.user.id)
+    await _get_owned_tracked_job_or_404(
+        session=session,
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+    )
+    subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
+        user_id=user_id
+    )
+    access_pass = await BillingAccessPassesRepository(session=session).get_active_for_user(
+        user_id=user_id
+    )
+    try:
+        run = await queue_job_pack_run(
+            session=session,
+            arq_redis=arq_redis,
+            user_id=user_id,
+            tracked_job_id=tracked_job_id,
+            subscription=subscription,
+            access_pass=access_pass,
+            parent_request_id=getattr(context, "request_id", None),
+        )
+    except JobAiRunNotAllowedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return TrackedJobAiRunResponse.model_validate(run)
+
+
+@router.get(
+    "/jobs/{tracked_job_id}/job-pack",
+    response_model=JobPackArtifactResponse,
+)
+async def get_job_pack_for_tracked_job_route(
+    tracked_job_id: UUID,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> JobPackArtifactResponse:
+    user_id = str(context.user.id)
+    await _get_owned_tracked_job_or_404(
+        session=session,
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+    )
+    run = await TrackedJobAiRunsRepository(session=session).get_latest_successful_for_job(
+        user_id=user_id,
+        tracked_job_id=tracked_job_id,
+        run_type="job_pack",
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tailor Pack not found.")
+    return JobPackArtifactResponse(
+        run=TrackedJobAiRunResponse.model_validate(run),
+        job_pack=JobPackPayload.model_validate(run.payload),
+    )
+
+
+@router.get("/ai-runs/{run_id}", response_model=TrackedJobAiRunResponse)
+async def get_tracked_job_ai_run_route(
+    run_id: UUID,
+    context: AuthContext = user_auth_dependency,
+    session: AsyncSession = db_session_dependency,
+) -> TrackedJobAiRunResponse:
+    run = await TrackedJobAiRunsRepository(session=session).get_by_id(run_id=run_id)
+    if run is None or run.user_id != str(context.user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI run not found.")
+    return TrackedJobAiRunResponse.model_validate(run)
 
 
 @router.patch("/jobs/{tracked_job_id}", response_model=TrackedJobResponse)

@@ -4,7 +4,10 @@ from arq.connections import ArqRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.logger import get_logger
-from src.modules.billing.repository import BillingSubscriptionsRepository
+from src.modules.billing.repository import (
+    BillingAccessPassesRepository,
+    BillingSubscriptionsRepository,
+)
 from src.modules.billing.service import build_billing_entitlements
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.search_jobs.models import SearchJobWorkflowRun
@@ -42,7 +45,13 @@ async def queue_search_job_workflow(
         subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
             user_id=user_id
         )
-        entitlements = build_billing_entitlements(subscription=subscription)
+        access_pass = await BillingAccessPassesRepository(session=session).get_active_for_user(
+            user_id=user_id
+        )
+        entitlements = build_billing_entitlements(
+            subscription=subscription,
+            access_pass=access_pass,
+        )
         if not entitlements.can_use_daily_monitoring:
             raise SearchJobMonitoringNotAllowedError(
                 "Daily monitoring is available on Vitable Pro."

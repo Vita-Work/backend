@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.billing.repository import BillingSubscriptionsRepository
+from src.modules.billing.repository import (
+    BillingAccessPassesRepository,
+    BillingSubscriptionsRepository,
+)
 from src.modules.billing.service import build_billing_entitlements, limit_visible_search_jobs
 from src.modules.job_tracker.repository import TrackedJobsRepository
 from src.modules.job_tracker.schemas import JobTrackerListQuery
@@ -30,7 +33,10 @@ async def build_user_search_job_run_response(
     subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
         user_id=user_id
     )
-    entitlements = build_billing_entitlements(subscription=subscription)
+    access_pass = await BillingAccessPassesRepository(session=session).get_active_for_user(
+        user_id=user_id
+    )
+    entitlements = build_billing_entitlements(subscription=subscription, access_pass=access_pass)
     response = build_search_job_workflow_run_response(workflow_run=workflow_run)
     response_jobs_by_key = {
         job_key: job

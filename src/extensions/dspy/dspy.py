@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field, ValidationError
 from src.config import get_settings
 from src.extensions.gemini import GeminiIntegrationError
 from src.logger import get_logger
+from src.workflows.job_application.signatures.match_gap import MatchGapReportSignature
+from src.workflows.job_application.signatures.tailor_plan import (
+    TailorResumePlanSignature,
+)
 from src.workflows.search_job.schemas import SearchExecutionPlan
 from src.workflows.search_job.signatures.execution_plan import SearchJobExecutionPlanSignature
 from src.workflows.search_setup.signatures.search_plan import SearchPlanSignature
@@ -41,6 +45,33 @@ class SearchJobExecutionPlanResult(SearchExecutionPlan):
     """Structured runtime execution plan for search_job."""
 
 
+class MatchGapReportResult(BaseModel):
+    """Structured fit analysis for one tracked job."""
+
+    overall_fit_score: int
+    fit_label: str
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    missing_keywords: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    recommended_positioning_angle: str
+    apply_recommendation: str
+
+
+class TailorResumePlanResult(BaseModel):
+    """Compact planning output for job-specific tailoring."""
+
+    target_headline: str
+    target_summary_angle: str
+    must_emphasize: list[str] = Field(default_factory=list)
+    must_downplay: list[str] = Field(default_factory=list)
+    must_include_keywords: list[str] = Field(default_factory=list)
+    forbidden_claims: list[str] = Field(default_factory=list)
+    experience_reordering_strategy: str
+    cover_letter_angle: str
+    recruiter_intro_angle: str
+
+
 class DspySearchSetupService:
     """Shared DSPy modules for verification and planning."""
 
@@ -54,6 +85,10 @@ class DspySearchSetupService:
         self.search_plan.set_lm(self.lm)
         self.search_job_plan = dspy.ChainOfThought(SearchJobExecutionPlanSignature)
         self.search_job_plan.set_lm(self.lm)
+        self.match_gap_report = dspy.ChainOfThought(MatchGapReportSignature)
+        self.match_gap_report.set_lm(self.lm)
+        self.tailor_resume_plan = dspy.ChainOfThought(TailorResumePlanSignature)
+        self.tailor_resume_plan.set_lm(self.lm)
 
     async def verify_candidate_profile(
         self,
@@ -142,6 +177,103 @@ class DspySearchSetupService:
             raise DspyIntegrationError("DSPy returned an invalid search-job plan payload.") from exc
         except Exception as exc:
             raise DspyIntegrationError("DSPy search-job planning failed.") from exc
+
+    async def build_match_gap_report(
+        self,
+        *,
+        user_profile: str,
+        verification_summary: str,
+        search_strategy_summary: str,
+        hard_preferences: list[str],
+        soft_preferences: list[str],
+        job_title: str,
+        company_name: str,
+        job_description: str,
+        job_skills: list[str],
+        why_apply_snapshot: str,
+        fit_level: str,
+    ) -> MatchGapReportResult:
+        try:
+            with dspy.settings.context(lm=self.lm):
+                prediction = await self.match_gap_report.acall(
+                    user_profile=user_profile,
+                    verification_summary=verification_summary,
+                    search_strategy_summary=search_strategy_summary,
+                    hard_preferences=hard_preferences,
+                    soft_preferences=soft_preferences,
+                    job_title=job_title,
+                    company_name=company_name,
+                    job_description=job_description,
+                    job_skills=job_skills,
+                    why_apply_snapshot=why_apply_snapshot,
+                    fit_level=fit_level,
+                )
+            return MatchGapReportResult.model_validate(
+                {
+                    "overall_fit_score": prediction.overall_fit_score,
+                    "fit_label": prediction.fit_label,
+                    "strengths": prediction.strengths,
+                    "gaps": prediction.gaps,
+                    "missing_keywords": prediction.missing_keywords,
+                    "risks": prediction.risks,
+                    "recommended_positioning_angle": prediction.recommended_positioning_angle,
+                    "apply_recommendation": prediction.apply_recommendation,
+                }
+            )
+        except ValidationError as exc:
+            raise DspyIntegrationError("DSPy returned an invalid match-gap payload.") from exc
+        except Exception as exc:
+            raise DspyIntegrationError("DSPy match-gap analysis failed.") from exc
+
+    async def build_tailor_resume_plan(
+        self,
+        *,
+        user_profile: str,
+        verification_summary: str,
+        search_strategy_summary: str,
+        hard_preferences: list[str],
+        soft_preferences: list[str],
+        job_title: str,
+        company_name: str,
+        job_description: str,
+        job_skills: list[str],
+        why_apply_snapshot: str,
+        fit_level: str,
+        match_gap_report: str,
+    ) -> TailorResumePlanResult:
+        try:
+            with dspy.settings.context(lm=self.lm):
+                prediction = await self.tailor_resume_plan.acall(
+                    user_profile=user_profile,
+                    verification_summary=verification_summary,
+                    search_strategy_summary=search_strategy_summary,
+                    hard_preferences=hard_preferences,
+                    soft_preferences=soft_preferences,
+                    job_title=job_title,
+                    company_name=company_name,
+                    job_description=job_description,
+                    job_skills=job_skills,
+                    why_apply_snapshot=why_apply_snapshot,
+                    fit_level=fit_level,
+                    match_gap_report=match_gap_report,
+                )
+            return TailorResumePlanResult.model_validate(
+                {
+                    "target_headline": prediction.target_headline,
+                    "target_summary_angle": prediction.target_summary_angle,
+                    "must_emphasize": prediction.must_emphasize,
+                    "must_downplay": prediction.must_downplay,
+                    "must_include_keywords": prediction.must_include_keywords,
+                    "forbidden_claims": prediction.forbidden_claims,
+                    "experience_reordering_strategy": prediction.experience_reordering_strategy,
+                    "cover_letter_angle": prediction.cover_letter_angle,
+                    "recruiter_intro_angle": prediction.recruiter_intro_angle,
+                }
+            )
+        except ValidationError as exc:
+            raise DspyIntegrationError("DSPy returned an invalid tailoring-plan payload.") from exc
+        except Exception as exc:
+            raise DspyIntegrationError("DSPy tailoring-plan generation failed.") from exc
 
 
 @lru_cache(maxsize=1)

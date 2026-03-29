@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from src.modules.billing.paddle import (
     verify_paddle_webhook_signature,
 )
 from src.modules.billing.repository import (
+    BillingAccessPassesRepository,
+    BillingCreditLedgerRepository,
     BillingSubscriptionsRepository,
     BillingWebhookEventsRepository,
 )
@@ -56,6 +59,8 @@ async def paddle_webhook_route(
         )
 
     subscription_repository = BillingSubscriptionsRepository(session=session)
+    access_pass_repository = BillingAccessPassesRepository(session=session)
+    credit_repository = BillingCreditLedgerRepository(session=session)
     event_repository = BillingWebhookEventsRepository(session=session)
     existing_event = await event_repository.get_by_provider_event_id(provider_event_id=event_id)
     if existing_event is not None and existing_event.status == "processed":
@@ -74,7 +79,10 @@ async def paddle_webhook_route(
 
     try:
         user_id = await _sync_subscription_from_paddle_event(
+            session=session,
             repository=subscription_repository,
+            access_pass_repository=access_pass_repository,
+            credit_repository=credit_repository,
             event_id=event_id,
             event_type=event_type,
             occurred_at=occurred_at,
@@ -102,7 +110,10 @@ async def paddle_webhook_route(
 
 async def _sync_subscription_from_paddle_event(
     *,
+    session: AsyncSession,
     repository: BillingSubscriptionsRepository,
+    access_pass_repository: BillingAccessPassesRepository,
+    credit_repository: BillingCreditLedgerRepository,
     event_id: str,
     event_type: str,
     occurred_at,
@@ -118,7 +129,10 @@ async def _sync_subscription_from_paddle_event(
         )
     if event_type.startswith("transaction."):
         return await _sync_from_transaction_payload(
+            session=session,
             repository=repository,
+            access_pass_repository=access_pass_repository,
+            credit_repository=credit_repository,
             event_id=event_id,
             event_type=event_type,
             occurred_at=occurred_at,
@@ -216,15 +230,102 @@ async def _sync_from_subscription_payload(
 
 async def _sync_from_transaction_payload(
     *,
+    session: AsyncSession,
     repository: BillingSubscriptionsRepository,
+    access_pass_repository: BillingAccessPassesRepository,
+    credit_repository: BillingCreditLedgerRepository,
     event_id: str,
     event_type: str,
     occurred_at,
     data: Mapping[str, object],
 ) -> str | None:
+    price_ids = _lookup_transaction_price_ids(data)
     provider_subscription_id = _coerce_optional_str(data.get("subscription_id"))
     provider_customer_id = _lookup_customer_id(data)
     user_id = _lookup_user_id(data)
+    transaction_id = _coerce_optional_str(data.get("id"))
+    transaction_status = _coerce_optional_str(data.get("status"))
+
+    if (
+        transaction_status == "completed"
+        and user_id
+        and _matches_any_price_id(
+            price_ids,
+            settings.paddle_price_id_weekly_sprint,
+        )
+    ):
+        subscription = await repository.get_by_user_id(user_id=user_id)
+        if subscription is None:
+            subscription = repository.add(user_id=user_id)
+        access_pass = None
+        if transaction_id:
+            access_pass = await access_pass_repository.get_by_provider_transaction_id(
+                provider_transaction_id=transaction_id
+            )
+        starts_at = (
+            parse_paddle_datetime(data.get("billed_at"))
+            or parse_paddle_datetime(data.get("updated_at"))
+            or occurred_at
+            or utcnow()
+        )
+        ends_at = starts_at + timedelta(days=7)
+        if access_pass is None:
+            access_pass_repository.add(
+                user_id=user_id,
+                pass_type="weekly_sprint",
+                provider="paddle",
+                provider_transaction_id=transaction_id,
+                provider_price_id=_first_matching_price_id(
+                    price_ids,
+                    settings.paddle_price_id_weekly_sprint,
+                ),
+                status="active",
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+        else:
+            access_pass.status = "active"
+            access_pass.starts_at = starts_at
+            access_pass.ends_at = ends_at
+            access_pass.provider_price_id = (
+                _first_matching_price_id(
+                    price_ids,
+                    settings.paddle_price_id_weekly_sprint,
+                )
+                or access_pass.provider_price_id
+            )
+
+    if (
+        transaction_status == "completed"
+        and user_id
+        and _matches_any_price_id(
+            price_ids,
+            settings.paddle_price_id_tailor_pack_topup,
+        )
+    ):
+        if transaction_id:
+            existing_topup = await credit_repository.find_entry_by_meta_transaction_id(
+                user_id=user_id,
+                credit_type="job_pack",
+                entry_type="topup_purchase",
+                transaction_id=transaction_id,
+            )
+            if existing_topup is None:
+                credit_repository.add_entry(
+                    user_id=user_id,
+                    credit_type="job_pack",
+                    delta=settings.billing_tailor_pack_topup_credits,
+                    entry_type="topup_purchase",
+                    meta={
+                        "transaction_id": transaction_id,
+                        "price_id": _first_matching_price_id(
+                            price_ids,
+                            settings.paddle_price_id_tailor_pack_topup,
+                        ),
+                    },
+                )
+                await session.flush()
+
     subscription = None
     if provider_subscription_id:
         subscription = await repository.get_by_provider_subscription_id(
@@ -239,7 +340,7 @@ async def _sync_from_transaction_payload(
     if subscription is None and user_id and provider_subscription_id:
         subscription = repository.add(user_id=user_id)
     if subscription is None:
-        return None
+        return user_id
 
     subscription.provider = "paddle"
     subscription.plan_code = "pro"
@@ -247,8 +348,13 @@ async def _sync_from_transaction_payload(
     subscription.provider_subscription_id = (
         provider_subscription_id or subscription.provider_subscription_id
     )
-    subscription.provider_transaction_id = _coerce_optional_str(data.get("id"))
-    transaction_status = _coerce_optional_str(data.get("status"))
+    subscription.provider_transaction_id = transaction_id
+    matched_pro_price_id = _first_matching_price_id(
+        price_ids,
+        settings.paddle_price_id_pro_search_monthly,
+        settings.paddle_price_id_pro_monthly,
+    )
+    subscription.provider_price_id = matched_pro_price_id or subscription.provider_price_id
     if transaction_status == "completed" and subscription.status in {None, "inactive", "canceled"}:
         subscription.status = "active"
     subscription.last_event_id = event_id
@@ -278,6 +384,39 @@ def _lookup_customer_id(data: Mapping[str, object]) -> str | None:
     customer = data.get("customer")
     if isinstance(customer, Mapping):
         return _coerce_optional_str(customer.get("id"))
+    return None
+
+
+def _lookup_transaction_price_ids(data: Mapping[str, object]) -> list[str]:
+    items = data.get("items")
+    if not isinstance(items, list):
+        return []
+
+    price_ids: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        price_id = _coerce_optional_str(item.get("price_id"))
+        if price_id:
+            price_ids.append(price_id)
+        price = item.get("price")
+        if isinstance(price, Mapping):
+            nested_price_id = _coerce_optional_str(price.get("id"))
+            if nested_price_id:
+                price_ids.append(nested_price_id)
+    return list(dict.fromkeys(price_ids))
+
+
+def _matches_any_price_id(price_ids: list[str], *candidates: str | None) -> bool:
+    candidate_set = {candidate for candidate in candidates if candidate}
+    return any(price_id in candidate_set for price_id in price_ids)
+
+
+def _first_matching_price_id(price_ids: list[str], *candidates: str | None) -> str | None:
+    candidate_set = {candidate for candidate in candidates if candidate}
+    for price_id in price_ids:
+        if price_id in candidate_set:
+            return price_id
     return None
 
 

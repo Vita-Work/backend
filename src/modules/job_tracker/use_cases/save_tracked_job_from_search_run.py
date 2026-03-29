@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.modules.billing.repository import BillingSubscriptionsRepository
+from src.modules.billing.repository import (
+    BillingAccessPassesRepository,
+    BillingSubscriptionsRepository,
+)
 from src.modules.billing.service import build_billing_entitlements, limit_visible_search_jobs
 from src.modules.job_tracker.repository import TrackedJobsRepository
 from src.modules.job_tracker.schemas import (
@@ -49,7 +52,10 @@ async def save_tracked_job_from_search_run(
     subscription = await BillingSubscriptionsRepository(session=session).get_by_user_id(
         user_id=user_id
     )
-    entitlements = build_billing_entitlements(subscription=subscription)
+    access_pass = await BillingAccessPassesRepository(session=session).get_active_for_user(
+        user_id=user_id
+    )
+    entitlements = build_billing_entitlements(subscription=subscription, access_pass=access_pass)
     visible_jobs = limit_visible_search_jobs(
         jobs=workflow_run.jobs or [],
         entitlements=entitlements,

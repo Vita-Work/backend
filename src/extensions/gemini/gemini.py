@@ -48,6 +48,27 @@ class UnifiedJobsBatchResult(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class TailoredResumeResult(BaseModel):
+    """Structured tailored resume output for one job application."""
+
+    headline: str
+    summary: str
+    core_skills: list[str] = Field(default_factory=list)
+    experience_bullets: list[str] = Field(default_factory=list)
+    project_bullets: list[str] = Field(default_factory=list)
+    education_notes: list[str] = Field(default_factory=list)
+    final_resume_markdown: str
+
+
+class ApplicationPacketResult(BaseModel):
+    """Structured application-ready artifacts for one tracked job."""
+
+    cover_letter: str
+    recruiter_intro_message: str
+    interview_talking_points: list[str] = Field(default_factory=list)
+    application_notes: list[str] = Field(default_factory=list)
+
+
 class GeminiCvExtractionService:
     """Run CV extraction prompts against Gemini."""
 
@@ -395,6 +416,127 @@ class GeminiJobSearchService:
         return sanitized
 
 
+class GeminiJobApplicationService:
+    """Generate job-specific application artifacts from grounded profile context."""
+
+    def __init__(self, *, api_key: str, model: str) -> None:
+        self.api_key = api_key
+        self.model = model
+
+    async def generate_tailored_resume(
+        self,
+        *,
+        application_context: dict[str, object],
+        tailoring_plan: dict[str, object],
+        match_gap_report: dict[str, object],
+    ) -> TailoredResumeResult:
+        async with genai.Client(api_key=self.api_key).aio as client:
+            response = await client.models.generate_content(
+                model=self.model,
+                contents=[
+                    self._tailored_resume_prompt(),
+                    json.dumps(
+                        {
+                            "application_context": application_context,
+                            "tailoring_plan": tailoring_plan,
+                            "match_gap_report": match_gap_report,
+                        },
+                        ensure_ascii=False,
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=TailoredResumeResult,
+                ),
+            )
+        return self._parse_tailored_resume_response(response=response)
+
+    async def generate_application_packet(
+        self,
+        *,
+        application_context: dict[str, object],
+        tailoring_plan: dict[str, object],
+        match_gap_report: dict[str, object],
+        tailored_resume: dict[str, object],
+    ) -> ApplicationPacketResult:
+        async with genai.Client(api_key=self.api_key).aio as client:
+            response = await client.models.generate_content(
+                model=self.model,
+                contents=[
+                    self._application_packet_prompt(),
+                    json.dumps(
+                        {
+                            "application_context": application_context,
+                            "tailoring_plan": tailoring_plan,
+                            "match_gap_report": match_gap_report,
+                            "tailored_resume": tailored_resume,
+                        },
+                        ensure_ascii=False,
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=ApplicationPacketResult,
+                ),
+            )
+        return self._parse_application_packet_response(response=response)
+
+    def _parse_tailored_resume_response(self, *, response) -> TailoredResumeResult:
+        try:
+            if isinstance(response.parsed, TailoredResumeResult):
+                return response.parsed
+            if isinstance(response.parsed, dict):
+                return TailoredResumeResult.model_validate(response.parsed)
+            if response.text:
+                return TailoredResumeResult.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise GeminiIntegrationError(
+                "Gemini returned an invalid tailored resume payload."
+            ) from exc
+
+        raise GeminiIntegrationError("Gemini returned an empty tailored resume response.")
+
+    def _parse_application_packet_response(self, *, response) -> ApplicationPacketResult:
+        try:
+            if isinstance(response.parsed, ApplicationPacketResult):
+                return response.parsed
+            if isinstance(response.parsed, dict):
+                return ApplicationPacketResult.model_validate(response.parsed)
+            if response.text:
+                return ApplicationPacketResult.model_validate_json(response.text)
+        except ValidationError as exc:
+            raise GeminiIntegrationError(
+                "Gemini returned an invalid application packet payload."
+            ) from exc
+
+        raise GeminiIntegrationError("Gemini returned an empty application packet response.")
+
+    @staticmethod
+    def _tailored_resume_prompt() -> str:
+        return (
+            "You are rewriting a resume for a specific job. "
+            "You must improve relevance and phrasing without inventing achievements, titles, "
+            "metrics, employers, dates, tools, certifications, or responsibilities that are not "
+            "supported by the provided candidate context. "
+            "Use only evidence-backed facts. Optimize for clarity, alignment, and "
+            "interview-worthiness, not exaggeration. "
+            "Return structured JSON only."
+        )
+
+    @staticmethod
+    def _application_packet_prompt() -> str:
+        return (
+            "You are preparing a job-specific application packet. "
+            "You must stay faithful to the provided candidate context and the match analysis. "
+            "Do not invent experience, outcomes, or motivation. "
+            "Produce concise, usable artifacts that improve the application while staying "
+            "truthful. "
+            "Return structured JSON only."
+        )
+
+
 @lru_cache(maxsize=1)
 def get_gemini_cv_extraction_service() -> GeminiCvExtractionService:
     """Build and cache the shared Gemini CV extraction service."""
@@ -416,6 +558,19 @@ def get_gemini_job_search_service() -> GeminiJobSearchService:
         raise GeminiIntegrationError("Missing required Gemini setting: GEMINI_API_KEY")
 
     return GeminiJobSearchService(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_gemini_job_application_service() -> GeminiJobApplicationService:
+    """Build and cache the shared Gemini job-application service."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        raise GeminiIntegrationError("Missing required Gemini setting: GEMINI_API_KEY")
+
+    return GeminiJobApplicationService(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
     )

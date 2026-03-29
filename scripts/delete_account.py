@@ -11,9 +11,14 @@ from src.db.engine import session_factory
 from src.extensions.s3 import S3StorageError, get_s3_storage
 
 DELETE_ORDER = [
+    "billing_credit_ledger",
+    "tracked_job_ai_runs",
     "tracked_job_contacts",
     "tracked_job_activities",
     "tracked_jobs",
+    "billing_access_passes",
+    "billing_subscriptions",
+    "billing_webhook_events",
     "search_job_progress_events",
     "search_job_seen_jobs",
     "search_job_workflow_runs",
@@ -26,9 +31,14 @@ DELETE_ORDER = [
 ]
 
 DELETE_SQL = {
+    "billing_credit_ledger": "delete from billing_credit_ledger where user_id = :user_id",
+    "tracked_job_ai_runs": "delete from tracked_job_ai_runs where user_id = :user_id",
     "tracked_job_contacts": "delete from tracked_job_contacts where user_id = :user_id",
     "tracked_job_activities": "delete from tracked_job_activities where user_id = :user_id",
     "tracked_jobs": "delete from tracked_jobs where user_id = :user_id",
+    "billing_access_passes": "delete from billing_access_passes where user_id = :user_id",
+    "billing_subscriptions": "delete from billing_subscriptions where user_id = :user_id",
+    "billing_webhook_events": "delete from billing_webhook_events where user_id = :user_id",
     "search_job_progress_events": "delete from search_job_progress_events where user_id = :user_id",
     "search_job_seen_jobs": "delete from search_job_seen_jobs where user_id = :user_id",
     "search_job_workflow_runs": "delete from search_job_workflow_runs where user_id = :user_id",

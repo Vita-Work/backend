@@ -82,9 +82,19 @@ class Settings(BaseSettings):
     paddle_client_side_token: str | None = None
     paddle_product_id_pro: str | None = None
     paddle_price_id_pro_monthly: str | None = None
+    paddle_product_id_pro_search: str | None = None
+    paddle_price_id_pro_search_monthly: str | None = None
+    paddle_product_id_weekly_sprint: str | None = None
+    paddle_price_id_weekly_sprint: str | None = None
+    paddle_product_id_tailor_pack: str | None = None
+    paddle_price_id_tailor_pack_topup: str | None = None
     paddle_webhook_secret: str | None = None
     paddle_webhook_tolerance_seconds: int = 300
     billing_free_job_limit: int = 3
+    billing_free_match_gap_limit: int = 2
+    billing_pro_search_included_job_pack_credits: int = 3
+    billing_weekly_sprint_included_job_pack_credits: int = 2
+    billing_tailor_pack_topup_credits: int = 5
     resume_intake_ttl_hours: int = 24
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
