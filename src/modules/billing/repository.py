@@ -42,6 +42,14 @@ class BillingSubscriptionsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_user_id_for_update(self, *, user_id: str) -> BillingSubscription | None:
+        result = await self.session.execute(
+            select(BillingSubscription)
+            .where(BillingSubscription.user_id == user_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_provider_subscription_id(
         self,
         *,

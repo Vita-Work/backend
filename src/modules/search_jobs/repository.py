@@ -91,6 +91,26 @@ class SearchJobWorkflowRunsRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_latest_monitoring_run_for_user_in_window(
+        self,
+        *,
+        user_id: str,
+        created_at_gte: datetime,
+        created_at_lt: datetime,
+    ) -> SearchJobWorkflowRun | None:
+        result = await self.session.execute(
+            select(SearchJobWorkflowRun)
+            .where(
+                SearchJobWorkflowRun.user_id == user_id,
+                SearchJobWorkflowRun.monitoring_mode.is_(True),
+                SearchJobWorkflowRun.created_at >= created_at_gte,
+                SearchJobWorkflowRun.created_at < created_at_lt,
+            )
+            .order_by(desc(SearchJobWorkflowRun.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     def add(
         self,
         *,
