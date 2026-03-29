@@ -218,14 +218,6 @@ async def queue_job_pack_run(
     settings: Settings | None = None,
 ):
     config = settings or get_settings()
-    entitlements = build_billing_entitlements(
-        subscription=subscription,
-        access_pass=access_pass,
-        settings=config,
-    )
-    if not entitlements.can_generate_job_packs:
-        raise JobAiRunNotAllowedError("Tailor Pack is not available for this user.")
-
     credit_repository = BillingCreditLedgerRepository(session=session)
     remaining_credits = await ensure_job_pack_allowances(
         user_id=user_id,
@@ -234,6 +226,14 @@ async def queue_job_pack_run(
         credit_repository=credit_repository,
         settings=config,
     )
+    entitlements = build_billing_entitlements(
+        subscription=subscription,
+        access_pass=access_pass,
+        has_job_pack_credits=remaining_credits > 0,
+        settings=config,
+    )
+    if not entitlements.can_generate_job_packs:
+        raise JobAiRunNotAllowedError("Tailor Pack is not available for this user.")
     if remaining_credits < 1:
         raise JobAiRunNotAllowedError("No Tailor Pack credits available.")
 

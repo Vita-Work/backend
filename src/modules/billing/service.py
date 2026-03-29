@@ -38,6 +38,7 @@ def build_billing_entitlements(
     subscription: BillingSubscription | None,
     access_pass: BillingAccessPass | None = None,
     *,
+    has_job_pack_credits: bool = False,
     settings: Settings | None = None,
 ) -> BillingEntitlements:
     config = settings or get_settings()
@@ -55,7 +56,7 @@ def build_billing_entitlements(
             can_access_full_results=False,
             can_use_daily_monitoring=False,
             can_run_match_gap_reports=True,
-            can_generate_job_packs=False,
+            can_generate_job_packs=has_job_pack_credits,
             search_results_limit=config.billing_free_job_limit,
             free_match_gap_limit=config.billing_free_match_gap_limit,
         )
@@ -141,6 +142,7 @@ def build_billing_overview(
     entitlements = build_billing_entitlements(
         subscription,
         access_pass=access_pass,
+        has_job_pack_credits=remaining_job_pack_credits > 0,
         settings=config,
     )
     monitoring_hour_local = subscription.monitoring_hour_local if subscription else 9
