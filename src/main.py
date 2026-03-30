@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from src.config import get_settings
 from src.db.engine import check_database_connection, get_db_context
@@ -62,21 +63,18 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         description="Backend API for Vita.",
         version=settings.app_version,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
 
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts_list)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8081",
-            "http://127.0.0.1:8081",
-        ],
-        allow_origin_regex=r"https://.*\.trycloudflare\.com",
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_origin_regex=settings.cors_allowed_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

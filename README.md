@@ -4,11 +4,11 @@ Backend template for Vita-style services.
 
 ## Docs
 
-- [`docs/overview.md`](/Users/aidin/Projects/vita/backend/docs/overview.md)
-- [`docs/cv-extraction.md`](/Users/aidin/Projects/vita/backend/docs/cv-extraction.md)
-- [`docs/search-setup-architecture.md`](/Users/aidin/Projects/vita/backend/docs/search-setup-architecture.md)
-- [`docs/billing-subscriptions.md`](/Users/aidin/Projects/vita/backend/docs/billing-subscriptions.md)
-- [`docs/branch-changes.md`](/Users/aidin/Projects/vita/backend/docs/branch-changes.md)
+- [`docs/overview.md`](docs/overview.md)
+- [`docs/cv-extraction.md`](docs/cv-extraction.md)
+- [`docs/search-setup-architecture.md`](docs/search-setup-architecture.md)
+- [`docs/billing-subscriptions.md`](docs/billing-subscriptions.md)
+- [`docs/branch-changes.md`](docs/branch-changes.md)
 
 ## Environment setup
 
@@ -121,4 +121,4 @@ The main user-facing flow is:
 
 ## Billing flow
 
-The subscription architecture is documented in [`docs/billing-subscriptions.md`](/Users/aidin/Projects/vita/backend/docs/billing-subscriptions.md).
+The subscription architecture is documented in [`docs/billing-subscriptions.md`](docs/billing-subscriptions.md).
