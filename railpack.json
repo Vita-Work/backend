@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install": {
+      "commands": [
+        "uv sync --frozen --no-dev"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "./scripts/start_service.sh"
+  }
+}
