@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.engine import with_session
 from src.extensions.arq.middleware import arq_job_middleware
 from src.logger import get_logger
+from src.modules.extraction.failures import describe_extraction_failure
 from src.modules.extraction.progress import update_extraction_progress
+from src.modules.extraction.provider_health import (
+    clear_cv_extraction_provider_failures,
+    record_cv_extraction_provider_failure,
+)
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.onboarding.repository import OnboardingSessionsRepository
 from src.modules.onboarding.use_cases.advance_onboarding_flow import (
@@ -32,7 +37,7 @@ async def process_cv_extraction_workflow(
     session: AsyncSession,
 ) -> None:
     """Run the extraction workflow in the background and persist the result."""
-    _ = ctx
+    arq_redis = ctx["redis"]
     repository = ExtractionWorkflowRunsRepository(session=session)
     onboarding_repository = OnboardingSessionsRepository(session=session)
     workflow_run = await repository.get_by_id(workflow_run_id=UUID(workflow_run_id))
@@ -104,24 +109,44 @@ async def process_cv_extraction_workflow(
         snapshot = await get_search_setup_state(config)
         values = snapshot.values or {}
     except Exception as exc:
+        failure = describe_extraction_failure(exc=exc)
         workflow_run.status = "failed"
-        workflow_run.error_message = str(exc)
+        workflow_run.error_message = failure.error_message
         update_extraction_progress(
             repository=repository,
             workflow_run=workflow_run,
             event_type="error",
-            phase="building_profile",
-            payload={"error": str(exc)},
+            phase="failed",
+            payload={
+                "error_code": failure.error_code,
+                "retryable": failure.retryable,
+                "error_message": failure.error_message,
+                "ui_label": failure.ui_label,
+                "ui_description": failure.ui_description,
+            },
         )
         if onboarding_session is not None:
             onboarding_session.status = "failed"
             onboarding_session.current_step = "extraction"
-            onboarding_session.last_error_message = str(exc)
+            onboarding_session.last_error_message = failure.error_message
         await session.commit()
+        try:
+            await record_cv_extraction_provider_failure(
+                arq_redis=arq_redis,
+                error_code=failure.error_code,
+            )
+        except Exception:
+            logger.warning(
+                "cv_extraction_provider_failure_record_failed",
+                workflow_run_id=workflow_run.id,
+                error_code=failure.error_code,
+                exc_info=True,
+            )
         logger.error(
             "cv_extraction_workflow_failed",
             workflow_run_id=workflow_run.id,
             user_id=workflow_run.user_id,
+            error_code=failure.error_code,
             error=str(exc),
             exc_info=True,
         )
@@ -152,6 +177,14 @@ async def process_cv_extraction_workflow(
     else:
         workflow_run.status = values.get("status", workflow_run.status)
     await session.commit()
+    try:
+        await clear_cv_extraction_provider_failures(arq_redis=arq_redis)
+    except Exception:
+        logger.warning(
+            "cv_extraction_provider_failure_clear_failed",
+            workflow_run_id=workflow_run.id,
+            exc_info=True,
+        )
 
     logger.info(
         "cv_extraction_workflow_persisted",

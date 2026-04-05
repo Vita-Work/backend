@@ -33,6 +33,10 @@ Required for subscriptions and Paddle checkout:
 - `PADDLE_PRICE_ID_PRO_MONTHLY`
 - `PADDLE_WEBHOOK_SECRET`
 
+If you intentionally need Paddle sandbox while `ENVIRONMENT=production`, you must also set:
+
+- `ALLOW_PADDLE_SANDBOX_IN_PRODUCTION=true`
+
 ## Development
 
 Use Python 3.13 for local development.
@@ -107,6 +111,12 @@ curl -X POST http://127.0.0.1:8000/extraction/cv \
 ```
 
 More details are in [`docs/cv-extraction.md`](docs/cv-extraction.md).
+
+Current backend extraction contract notes:
+
+- the enforced CV upload limit is `20 MB`
+- failed extraction runs emit a terminal `failed` UI phase with stable `error_code` and `retryable` fields
+- `/me/app-state` includes `last_failed_extraction` so the frontend can restore failure UX after refresh
 
 ## Onboarding flow
 

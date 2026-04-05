@@ -19,7 +19,7 @@ These outputs are designed for the later clarification step, which asks focused 
 
 Configured upload limit:
 
-- `CV_UPLOAD_MAX_SIZE_MB=30`
+- `CV_UPLOAD_MAX_SIZE_MB=20`
 
 ## Flow
 
@@ -35,6 +35,16 @@ Configured upload limit:
    - `extracted_profile`
    - `missing_info`
    - `preference_hints`
+
+If extraction fails, the backend now persists and emits a terminal `failed` UI phase instead of leaving the run in a success-like late phase. Failed runs expose stable machine-readable details such as:
+
+- `error_code`
+- `retryable`
+- `ui_phase`
+- `ui_label`
+- `ui_description`
+
+The `/me/app-state` snapshot also includes `last_failed_extraction` so the frontend can restore the correct post-refresh failure UX.
 
 ## Strategy details
 
@@ -88,6 +98,9 @@ Optional:
 - `CV_UPLOAD_MAX_SIZE_MB`
 - `GEMINI_MODEL`
 - `GEMINI_API_VERSION`
+- `CV_EXTRACTION_PROVIDER_FAILURE_THRESHOLD`
+- `CV_EXTRACTION_PROVIDER_FAILURE_WINDOW_SECONDS`
+- `CV_EXTRACTION_PROVIDER_COOLDOWN_SECONDS`
 
 ## Manual local run
 
@@ -118,4 +131,6 @@ curl -X POST http://127.0.0.1:8000/extraction/cv/run \
 - The upload-only endpoint is useful for checking validation and storage without running Gemini.
 - The end-to-end endpoint queues work and returns immediately with a workflow run id.
 - If S3 credentials are invalid, upload fails before Gemini starts.
+- CV extraction retries transient Gemini failures with bounded backoff before failing.
+- Repeated provider degradation can temporarily short-circuit new extraction runs with `503`.
 - If `GEMINI_API_KEY` is missing or invalid, the workflow fails at extraction time.

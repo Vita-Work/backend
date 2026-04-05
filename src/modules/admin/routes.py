@@ -13,6 +13,10 @@ from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
 from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.extraction.presenters import build_extraction_workflow_run_response
+from src.modules.extraction.provider_health import (
+    CvExtractionProviderUnavailableError,
+    ensure_cv_extraction_provider_available,
+)
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.extraction.use_cases.get_cv_extraction_run import get_cv_extraction_workflow_run
 from src.modules.extraction.use_cases.intake_cv import (
@@ -245,7 +249,12 @@ async def get_extraction_run_admin_route(
     )
     if workflow_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return build_extraction_workflow_run_response(workflow_run=workflow_run)
+    repository = ExtractionWorkflowRunsRepository(session=session)
+    failure_event = await repository.get_latest_failure_event(workflow_run_id=workflow_run.id)
+    return build_extraction_workflow_run_response(
+        workflow_run=workflow_run,
+        failure_event=failure_event,
+    )
 
 
 @router.delete("/extraction-runs/{workflow_run_id}")
@@ -273,6 +282,7 @@ async def run_extraction_for_user_admin_route(
     arq_redis: ArqRedis = arq_redis_dependency,
 ):
     try:
+        await ensure_cv_extraction_provider_available(arq_redis=arq_redis)
         prepared_cv = await intake_cv_for_extraction(upload=file)
         # The request may have already touched the DB during admin auth.
         # Reset the session after long-running upload/storage I/O so queueing
@@ -295,7 +305,12 @@ async def run_extraction_for_user_admin_route(
         ) from exc
     except InvalidCvFileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
+    except (
+        S3StorageError,
+        GeminiIntegrationError,
+        WorkflowEnqueueError,
+        CvExtractionProviderUnavailableError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc

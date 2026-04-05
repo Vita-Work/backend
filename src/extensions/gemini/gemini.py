@@ -24,6 +24,23 @@ class GeminiIntegrationError(RuntimeError):
     """Raised when Gemini integration cannot complete a request."""
 
 
+class GeminiProviderError(GeminiIntegrationError):
+    """Stable Gemini provider failure with a machine-readable error code."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        retryable: bool,
+        diagnostic_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+        self.diagnostic_message = diagnostic_message or message
+
+
 class CvExtractionResult(BaseModel):
     """Structured extraction result returned by Gemini."""
 
@@ -80,49 +97,67 @@ class GeminiCvExtractionService:
     ) -> None:
         self.api_key = api_key
         self.model = model
+        settings = get_settings()
+        self.request_timeout_seconds = float(settings.gemini_request_timeout_seconds)
+        self.max_retries = settings.gemini_max_retries
 
     async def extract_from_text(self, *, cv_text: str) -> CvExtractionResult:
         """Extract a structured candidate profile from plain CV text."""
-        return await self._generate_with_contents(contents=[self._extraction_prompt(), cv_text])
+        return await self._generate_with_retry(contents=[self._extraction_prompt(), cv_text])
 
     async def extract_from_file(self, *, file_path: Path, mime_type: str) -> CvExtractionResult:
         """Extract a structured candidate profile from an uploaded CV file."""
-        async with genai.Client(api_key=self.api_key).aio as client:
-            uploaded_file = await client.files.upload(
-                file=file_path,
-                config=types.UploadFileConfig(
-                    mime_type=mime_type,
-                    display_name=file_path.name,
-                ),
-            )
-
-            uploaded_file = await self._wait_until_file_active(
-                client=client,
-                file_name=uploaded_file.name,
-            )
-            logger.info(
-                "gemini_file_upload_ready",
-                file_name=uploaded_file.name,
-                mime_type=uploaded_file.mime_type,
-                model=self.model,
-            )
-
+        attempts = self.max_retries + 1
+        for attempt in range(1, attempts + 1):
             try:
-                response = await client.models.generate_content(
-                    model=self.model,
-                    contents=[
-                        self._extraction_prompt(),
-                        types.Part.from_uri(
-                            file_uri=uploaded_file.uri,
-                            mime_type=uploaded_file.mime_type,
-                        ),
-                    ],
-                    config=self._generation_config(),
-                )
-            finally:
-                await client.files.delete(name=uploaded_file.name)
+                async with genai.Client(api_key=self.api_key).aio as client:
+                    uploaded_file = await self._upload_file(
+                        client=client,
+                        file_path=file_path,
+                        mime_type=mime_type,
+                    )
+                    uploaded_file = await self._wait_until_file_active(
+                        client=client,
+                        file_name=uploaded_file.name,
+                    )
+                    logger.info(
+                        "gemini_file_upload_ready",
+                        file_name=uploaded_file.name,
+                        mime_type=uploaded_file.mime_type,
+                        model=self.model,
+                    )
 
-        return self._parse_response(response=response)
+                    try:
+                        response = await asyncio.wait_for(
+                            client.models.generate_content(
+                                model=self.model,
+                                contents=[
+                                    self._extraction_prompt(),
+                                    types.Part.from_uri(
+                                        file_uri=uploaded_file.uri,
+                                        mime_type=uploaded_file.mime_type,
+                                    ),
+                                ],
+                                config=self._generation_config(),
+                            ),
+                            timeout=self.request_timeout_seconds,
+                        )
+                    finally:
+                        await client.files.delete(name=uploaded_file.name)
+            except Exception as exc:
+                provider_error = self._provider_error_from_exception(exc)
+                if attempt >= attempts or not provider_error.retryable:
+                    raise provider_error from exc
+                await self._sleep_before_retry(
+                    attempt=attempt,
+                    error=provider_error,
+                    event_name="gemini_cv_extraction_retry_scheduled",
+                )
+                continue
+
+            return self._parse_response(response=response)
+
+        raise GeminiIntegrationError("Gemini CV extraction failed after retries.")
 
     async def decide_clarification(
         self,
@@ -162,16 +197,45 @@ class GeminiCvExtractionService:
             )
         return self._parse_clarification_response(response=response)
 
-    async def _generate_with_contents(
-        self, *, contents: list[str | types.File]
-    ) -> CvExtractionResult:
-        async with genai.Client(api_key=self.api_key).aio as client:
-            response = await client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=self._generation_config(),
-            )
-        return self._parse_response(response=response)
+    async def _generate_with_retry(self, *, contents: list[str | types.File]) -> CvExtractionResult:
+        attempts = self.max_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                async with genai.Client(api_key=self.api_key).aio as client:
+                    response = await asyncio.wait_for(
+                        client.models.generate_content(
+                            model=self.model,
+                            contents=contents,
+                            config=self._generation_config(),
+                        ),
+                        timeout=self.request_timeout_seconds,
+                    )
+            except Exception as exc:
+                provider_error = self._provider_error_from_exception(exc)
+                if attempt >= attempts or not provider_error.retryable:
+                    raise provider_error from exc
+                await self._sleep_before_retry(
+                    attempt=attempt,
+                    error=provider_error,
+                    event_name="gemini_cv_extraction_retry_scheduled",
+                )
+                continue
+
+            return self._parse_response(response=response)
+
+        raise GeminiIntegrationError("Gemini CV extraction failed after retries.")
+
+    async def _upload_file(self, *, client, file_path: Path, mime_type: str):
+        return await asyncio.wait_for(
+            client.files.upload(
+                file=file_path,
+                config=types.UploadFileConfig(
+                    mime_type=mime_type,
+                    display_name=file_path.name,
+                ),
+            ),
+            timeout=self.request_timeout_seconds,
+        )
 
     async def _wait_until_file_active(
         self,
@@ -184,14 +248,21 @@ class GeminiCvExtractionService:
 
         while current_file.state == types.FileState.PROCESSING:
             if asyncio.get_running_loop().time() >= deadline:
-                raise GeminiIntegrationError("Gemini file processing timed out.")
+                raise GeminiProviderError(
+                    "CV extraction timed out while the provider processed the uploaded file.",
+                    error_code="provider_timeout",
+                    retryable=True,
+                )
 
             await asyncio.sleep(FILE_POLL_INTERVAL_SECONDS)
             current_file = await client.files.get(name=file_name)
 
         if current_file.state != types.FileState.ACTIVE:
-            raise GeminiIntegrationError(
-                f"Gemini file upload failed with state={current_file.state}."
+            raise GeminiProviderError(
+                "CV extraction could not prepare the uploaded file with the provider.",
+                error_code="provider_request_failed",
+                retryable=False,
+                diagnostic_message=f"Gemini file upload failed with state={current_file.state}.",
             )
 
         return current_file
@@ -212,9 +283,17 @@ class GeminiCvExtractionService:
             if response.text:
                 return CvExtractionResult.model_validate_json(response.text)
         except ValidationError as exc:
-            raise GeminiIntegrationError("Gemini returned an invalid extraction payload.") from exc
+            raise GeminiProviderError(
+                "CV extraction received an invalid response from the provider.",
+                error_code="provider_invalid_response",
+                retryable=False,
+            ) from exc
 
-        raise GeminiIntegrationError("Gemini returned an empty extraction response.")
+        raise GeminiProviderError(
+            "CV extraction received an empty response from the provider.",
+            error_code="provider_invalid_response",
+            retryable=False,
+        )
 
     def _parse_clarification_response(self, *, response) -> ClarificationDecision:
         try:
@@ -230,6 +309,62 @@ class GeminiCvExtractionService:
             ) from exc
 
         raise GeminiIntegrationError("Gemini returned an empty clarification response.")
+
+    async def _sleep_before_retry(
+        self,
+        *,
+        attempt: int,
+        error: GeminiProviderError,
+        event_name: str,
+    ) -> None:
+        delay_seconds = min(8.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.5))
+        logger.warning(
+            event_name,
+            retry_attempt=attempt,
+            delay_seconds=round(delay_seconds, 2),
+            model=self.model,
+            error_code=error.error_code,
+            error=error.diagnostic_message,
+        )
+        await asyncio.sleep(delay_seconds)
+
+    @staticmethod
+    def _provider_error_from_exception(exc: Exception) -> GeminiProviderError:
+        if isinstance(exc, GeminiProviderError):
+            return exc
+
+        message = str(exc)
+        normalized_message = message.upper()
+        if "429" in normalized_message or "RESOURCE_EXHAUSTED" in normalized_message:
+            return GeminiProviderError(
+                "CV extraction is temporarily unavailable because the provider quota is exhausted.",
+                error_code="provider_quota_exhausted",
+                retryable=True,
+                diagnostic_message=message,
+            )
+        if any(marker in normalized_message for marker in ("504", "DEADLINE_EXCEEDED", "TIMEOUT")):
+            return GeminiProviderError(
+                "CV extraction timed out while waiting for the provider.",
+                error_code="provider_timeout",
+                retryable=True,
+                diagnostic_message=message,
+            )
+        if any(
+            marker in normalized_message
+            for marker in ("500", "503", "SERVICE UNAVAILABLE", "UNAVAILABLE", "INTERNAL")
+        ):
+            return GeminiProviderError(
+                "CV extraction is temporarily unavailable because the provider is failing.",
+                error_code="provider_unavailable",
+                retryable=True,
+                diagnostic_message=message,
+            )
+        return GeminiProviderError(
+            "CV extraction could not complete with the provider.",
+            error_code="provider_request_failed",
+            retryable=False,
+            diagnostic_message=message,
+        )
 
     @staticmethod
     def _extraction_prompt() -> str:

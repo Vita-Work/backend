@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.modules.auth.security import utcnow
+from src.modules.extraction.progress import get_extraction_error_code, get_extraction_retryable
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.job_tracker.repository import TrackedJobsRepository
 from src.modules.job_tracker.schemas import JobTrackerListQuery
@@ -37,6 +39,17 @@ PHASE_ROUTES: dict[AppPhase, str] = {
 
 
 @dataclass
+class LastFailedExtractionSnapshot:
+    workflow_run_id: UUID
+    ui_phase: str
+    ui_label: str | None
+    ui_description: str | None
+    error_code: str | None
+    retry_available: bool
+    failed_at: datetime | None
+
+
+@dataclass
 class AppStateSnapshot:
     phase: AppPhase
     next_route: str
@@ -48,6 +61,7 @@ class AppStateSnapshot:
     onboarding_session_id: UUID | None = None
     extraction_workflow_run_id: UUID | None = None
     search_job_workflow_run_id: UUID | None = None
+    last_failed_extraction: LastFailedExtractionSnapshot | None = None
     is_new_user: bool = False
 
 
@@ -85,6 +99,20 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         and not has_search_results
         and not has_tracker_jobs
     )
+    last_failed_extraction = None
+    if latest_extraction is not None and latest_extraction.status == "failed":
+        failure_event = await extraction_repository.get_latest_failure_event(
+            workflow_run_id=latest_extraction.id
+        )
+        last_failed_extraction = LastFailedExtractionSnapshot(
+            workflow_run_id=latest_extraction.id,
+            ui_phase=latest_extraction.ui_phase or "failed",
+            ui_label=latest_extraction.ui_label,
+            ui_description=latest_extraction.ui_description,
+            error_code=get_extraction_error_code(progress_event=failure_event),
+            retry_available=bool(get_extraction_retryable(progress_event=failure_event)),
+            failed_at=latest_extraction.finished_at or latest_extraction.updated_at,
+        )
 
     if latest_search is not None and latest_search.status in {
         "queued",
@@ -111,6 +139,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
             ),
             extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
             search_job_workflow_run_id=latest_search.id,
+            last_failed_extraction=last_failed_extraction,
             is_new_user=is_new_user,
         )
 
@@ -132,6 +161,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
             ),
             extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
             search_job_workflow_run_id=latest_search.id if latest_search else None,
+            last_failed_extraction=last_failed_extraction,
             is_new_user=is_new_user,
         )
 
@@ -148,6 +178,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
                 onboarding_session_id=active_onboarding.id,
                 extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
                 search_job_workflow_run_id=latest_search.id if latest_search else None,
+                last_failed_extraction=last_failed_extraction,
                 is_new_user=is_new_user,
             )
         if active_onboarding.status == "awaiting_confirmation":
@@ -162,6 +193,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
                 onboarding_session_id=active_onboarding.id,
                 extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
                 search_job_workflow_run_id=latest_search.id if latest_search else None,
+                last_failed_extraction=last_failed_extraction,
                 is_new_user=is_new_user,
             )
         if active_onboarding.status in {
@@ -181,6 +213,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
                 onboarding_session_id=active_onboarding.id,
                 extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
                 search_job_workflow_run_id=latest_search.id if latest_search else None,
+                last_failed_extraction=last_failed_extraction,
                 is_new_user=is_new_user,
             )
 
@@ -196,6 +229,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
             onboarding_session_id=active_onboarding.id if active_onboarding else None,
             extraction_workflow_run_id=latest_extraction.id,
             search_job_workflow_run_id=latest_search.id if latest_search else None,
+            last_failed_extraction=last_failed_extraction,
             is_new_user=is_new_user,
         )
 
@@ -210,6 +244,7 @@ async def build_app_state_snapshot(*, session: AsyncSession, user: User) -> AppS
         onboarding_session_id=active_onboarding.id if active_onboarding else None,
         extraction_workflow_run_id=latest_extraction.id if latest_extraction else None,
         search_job_workflow_run_id=latest_search.id if latest_search else None,
+        last_failed_extraction=last_failed_extraction,
         is_new_user=is_new_user,
     )
 

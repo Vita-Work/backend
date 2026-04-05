@@ -4,8 +4,10 @@ from arq.connections import ArqRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.logger import get_logger
+from src.modules.extraction.failures import build_enqueue_failure_details
 from src.modules.extraction.models import ExtractionWorkflowRun
 from src.modules.extraction.progress import update_extraction_progress
+from src.modules.extraction.provider_health import ensure_cv_extraction_provider_available
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.extraction.use_cases.intake_cv import PreparedCvExtractionInput
 from src.modules.onboarding.repository import OnboardingSessionsRepository
@@ -31,6 +33,8 @@ async def queue_cv_extraction_workflow(
     parent_request_id: str | None = None,
 ) -> ExtractionWorkflowRun:
     """Persist and enqueue a workflow run for background processing."""
+    await ensure_cv_extraction_provider_available(arq_redis=arq_redis)
+
     repository = ExtractionWorkflowRunsRepository(session=session)
     onboarding_repository = OnboardingSessionsRepository(session=session)
     active_sessions = await onboarding_repository.list_active_for_user(user_id=user_id)
@@ -120,18 +124,25 @@ async def queue_cv_extraction_workflow(
         if job is None:
             raise WorkflowEnqueueError("Workflow job already exists.")
     except Exception as exc:
+        failure = build_enqueue_failure_details()
         workflow_run.status = "failed"
-        workflow_run.error_message = "Failed to enqueue extraction workflow."
+        workflow_run.error_message = failure.error_message
         update_extraction_progress(
             repository=repository,
             workflow_run=workflow_run,
             event_type="error",
-            phase="file_stored",
-            payload={"error": "Failed to enqueue extraction workflow."},
+            phase="failed",
+            payload={
+                "error_code": failure.error_code,
+                "retryable": failure.retryable,
+                "error_message": failure.error_message,
+                "ui_label": failure.ui_label,
+                "ui_description": failure.ui_description,
+            },
         )
         onboarding_session.status = "failed"
         onboarding_session.current_step = "extraction"
-        onboarding_session.last_error_message = "Failed to enqueue extraction workflow."
+        onboarding_session.last_error_message = failure.error_message
         await session.commit()
         logger.error(
             "cv_extraction_workflow_enqueue_failed",

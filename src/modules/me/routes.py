@@ -15,6 +15,11 @@ from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
 from src.modules.auth.dependencies import AuthContext, require_authenticated_user
 from src.modules.extraction.presenters import build_extraction_workflow_run_response
+from src.modules.extraction.progress import get_extraction_error_code, get_extraction_retryable
+from src.modules.extraction.provider_health import (
+    CvExtractionProviderUnavailableError,
+    ensure_cv_extraction_provider_available,
+)
 from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.extraction.schemas import (
     CvExtractionWorkflowRunResponse,
@@ -110,7 +115,10 @@ async def get_my_app_state_route(
     session: AsyncSession = db_session_dependency,
 ) -> MeAppStateResponse:
     snapshot = await build_app_state_snapshot(session=session, user=context.user)
-    return MeAppStateResponse(**snapshot.__dict__)
+    payload = dict(snapshot.__dict__)
+    if snapshot.last_failed_extraction is not None:
+        payload["last_failed_extraction"] = snapshot.last_failed_extraction.__dict__
+    return MeAppStateResponse(**payload)
 
 
 @router.get("/onboarding/active", response_model=OnboardingSessionResponse)
@@ -257,6 +265,7 @@ async def run_my_extraction_route(
 ) -> CvExtractionWorkflowRunResponse:
     user_id = str(context.user.id)
     try:
+        await ensure_cv_extraction_provider_available(arq_redis=arq_redis)
         prepared_cv = await intake_cv_for_extraction(upload=file)
         # The authenticated request may already hold a DB connection from auth/session lookups.
         # Release it after long-running upload/storage I/O before we start a write transaction.
@@ -278,7 +287,12 @@ async def run_my_extraction_route(
         ) from exc
     except InvalidCvFileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
+    except (
+        S3StorageError,
+        GeminiIntegrationError,
+        WorkflowEnqueueError,
+        CvExtractionProviderUnavailableError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
@@ -301,7 +315,12 @@ async def get_my_extraction_run_route(
     )
     if workflow_run is None or workflow_run.user_id != str(context.user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
-    return build_extraction_workflow_run_response(workflow_run=workflow_run)
+    repository = ExtractionWorkflowRunsRepository(session=session)
+    failure_event = await repository.get_latest_failure_event(workflow_run_id=workflow_run.id)
+    return build_extraction_workflow_run_response(
+        workflow_run=workflow_run,
+        failure_event=failure_event,
+    )
 
 
 @router.get(
@@ -333,6 +352,8 @@ async def stream_my_extraction_run_events_route(
                     ui_phase=item.ui_phase,
                     ui_label=item.ui_label,
                     ui_description=item.ui_description,
+                    error_code=get_extraction_error_code(progress_event=item),
+                    retryable=get_extraction_retryable(progress_event=item),
                     progress_percent=item.progress_percent,
                     progress_stage_index=item.progress_stage_index,
                     progress_stage_total=item.progress_stage_total,
@@ -348,7 +369,14 @@ async def stream_my_extraction_run_events_route(
                 "failed",
             }:
                 terminal = (
-                    build_extraction_workflow_run_response(workflow_run=workflow_run_latest)
+                    build_extraction_workflow_run_response(
+                        workflow_run=workflow_run_latest,
+                        failure_event=(
+                            await repository.get_latest_failure_event(
+                                workflow_run_id=workflow_run_latest.id
+                            )
+                        ),
+                    )
                     if workflow_run_latest
                     else None
                 )

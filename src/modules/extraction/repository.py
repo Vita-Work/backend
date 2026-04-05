@@ -106,6 +106,22 @@ class ExtractionWorkflowRunsRepository:
         )
         return list(result.scalars().all())
 
+    async def get_latest_failure_event(
+        self,
+        *,
+        workflow_run_id: UUID,
+    ) -> ExtractionProgressEvent | None:
+        result = await self.session.execute(
+            select(ExtractionProgressEvent)
+            .where(
+                ExtractionProgressEvent.workflow_run_id == workflow_run_id,
+                ExtractionProgressEvent.ui_phase == "failed",
+            )
+            .order_by(desc(ExtractionProgressEvent.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def list_progress_events_after(
         self,
         *,

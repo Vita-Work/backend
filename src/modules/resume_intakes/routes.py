@@ -18,6 +18,10 @@ from src.modules.auth.security import (
     utcnow,
 )
 from src.modules.extraction.presenters import build_extraction_workflow_run_response
+from src.modules.extraction.provider_health import (
+    CvExtractionProviderUnavailableError,
+    ensure_cv_extraction_provider_available,
+)
 from src.modules.extraction.schemas import ExtractionInputResponse, StoredCvFileResponse
 from src.modules.extraction.use_cases.intake_cv import (
     CvFileTooLargeError,
@@ -272,6 +276,7 @@ async def run_pending_resume_extraction_route(
     target_key = storage.build_object_key(namespace="cv", filename=intake.cv_filename)
 
     try:
+        await ensure_cv_extraction_provider_available(arq_redis=arq_redis)
         copied_object = await storage.copy_object(
             source_key=intake.storage_key,
             destination_key=target_key,
@@ -299,7 +304,12 @@ async def run_pending_resume_extraction_route(
             prepared_cv=prepared_cv,
             parent_request_id=getattr(request.state, "request_id", None),
         )
-    except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
+    except (
+        S3StorageError,
+        GeminiIntegrationError,
+        WorkflowEnqueueError,
+        CvExtractionProviderUnavailableError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc

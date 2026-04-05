@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from src.modules.extraction.provider_health import CvExtractionProviderUnavailableError
 from src.modules.extraction.use_cases import queue_cv_extraction as queue_module
 
 
@@ -64,6 +65,10 @@ def test_queue_cv_extraction_persists_and_enqueues(monkeypatch: pytest.MonkeyPat
             return onboarding_session
 
     class FakeRedis:
+        async def get(self, key: str):
+            _ = key
+            return None
+
         async def enqueue_job(self, function: str, *args, **kwargs):
             redis_calls.append((function, args, kwargs))
             return object()
@@ -189,6 +194,10 @@ def test_queue_cv_extraction_supersedes_existing_active_sessions_before_replacem
             return replacement_session
 
     class FakeRedis:
+        async def get(self, key: str):
+            _ = key
+            return None
+
         async def enqueue_job(self, function: str, *args, **kwargs):
             return object()
 
@@ -231,3 +240,41 @@ def test_queue_cv_extraction_supersedes_existing_active_sessions_before_replacem
     assert replacement_session.latest_workflow_run_id == workflow_run.id
     assert session.flush_calls == 3
     assert session.commit_calls == 1
+
+
+def test_queue_cv_extraction_fails_fast_when_provider_is_degraded() -> None:
+    session = FakeAsyncSession()
+
+    class FakeRedis:
+        async def get(self, key: str):
+            _ = key
+            return b"provider_quota_exhausted"
+
+    prepared_cv = SimpleNamespace(
+        stored_object=SimpleNamespace(
+            bucket="bucket", key="cv/key.pdf", uri="s3://bucket/cv/key.pdf"
+        ),
+        filename="resume.pdf",
+        content_type="application/pdf",
+        extension=".pdf",
+        size_bytes=123,
+        sha256="abc123",
+        strategy="model_file",
+        inline_text=None,
+    )
+
+    with pytest.raises(
+        CvExtractionProviderUnavailableError,
+        match="temporarily unavailable",
+    ):
+        asyncio.run(
+            queue_module.queue_cv_extraction_workflow(
+                session=session,
+                arq_redis=FakeRedis(),
+                user_id="user-1",
+                prepared_cv=prepared_cv,
+            )
+        )
+
+    assert session.flush_calls == 0
+    assert session.commit_calls == 0

@@ -118,7 +118,10 @@ async def _buffer_upload_to_disk(upload: UploadFile, *, max_size_bytes: int) -> 
         while chunk := await upload.read(CHUNK_SIZE):
             total_size += len(chunk)
             if total_size > max_size_bytes:
-                raise CvFileTooLargeError("Uploaded CV exceeds the configured size limit.")
+                settings = get_settings()
+                raise CvFileTooLargeError(
+                    f"Uploaded CV exceeds the {settings.cv_upload_max_size_mb} MB limit."
+                )
 
             file_hash.update(chunk)
             temp_file.write(chunk)

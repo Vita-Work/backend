@@ -139,6 +139,7 @@ def build_billing_overview(
     settings: Settings | None = None,
 ) -> BillingOverviewResponse:
     config = settings or get_settings()
+    _assert_safe_billing_checkout_configuration(config)
     entitlements = build_billing_entitlements(
         subscription,
         access_pass=access_pass,
@@ -252,6 +253,18 @@ def _safe_zoneinfo(value: str) -> ZoneInfo:
         return ZoneInfo(value)
     except ZoneInfoNotFoundError:
         return ZoneInfo("UTC")
+
+
+def _assert_safe_billing_checkout_configuration(config: Settings) -> None:
+    if (
+        config.environment.lower() == "production"
+        and config.paddle_environment == "sandbox"
+        and not config.allow_paddle_sandbox_in_production
+    ):
+        raise RuntimeError(
+            "Paddle sandbox billing is not allowed in production without "
+            "ALLOW_PADDLE_SANDBOX_IN_PRODUCTION=true."
+        )
 
 
 async def ensure_job_pack_allowances(

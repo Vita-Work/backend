@@ -31,6 +31,12 @@ Required backend env vars:
 - `PADDLE_PRODUCT_ID_PRO`
 - `PADDLE_PRICE_ID_PRO_MONTHLY`
 - `PADDLE_WEBHOOK_SECRET`
+- `ALLOW_PADDLE_SANDBOX_IN_PRODUCTION`
+
+Production safety rule:
+
+- the backend refuses to start with `ENVIRONMENT=production` and `PADDLE_ENVIRONMENT=sandbox`
+- use `ALLOW_PADDLE_SANDBOX_IN_PRODUCTION=true` only for an explicit intentional override
 
 Do not commit live or sandbox secrets to git.
 

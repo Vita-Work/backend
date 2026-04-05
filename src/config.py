@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     s3_connect_timeout_seconds: int = 5
     s3_read_timeout_seconds: int = 30
     s3_max_pool_connections: int = 50
-    cv_upload_max_size_mb: int = 30
+    cv_upload_max_size_mb: int = 20
     clarification_max_rounds: int = 5
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
@@ -47,6 +48,9 @@ class Settings(BaseSettings):
     gemini_api_version: str = "v1alpha"
     gemini_request_timeout_seconds: int = 180
     gemini_max_retries: int = 2
+    cv_extraction_provider_failure_threshold: int = 3
+    cv_extraction_provider_failure_window_seconds: int = 300
+    cv_extraction_provider_cooldown_seconds: int = 300
     dspy_model: str | None = None
     job_parser_site_concurrency: int = 4
     job_parser_detail_concurrency: int = 8
@@ -90,6 +94,7 @@ class Settings(BaseSettings):
     paddle_price_id_tailor_pack_topup: str | None = None
     paddle_webhook_secret: str | None = None
     paddle_webhook_tolerance_seconds: int = 300
+    allow_paddle_sandbox_in_production: bool = False
     billing_free_job_limit: int = 3
     billing_free_match_gap_limit: int = 2
     billing_pro_search_included_job_pack_credits: int = 3
@@ -98,6 +103,20 @@ class Settings(BaseSettings):
     resume_intake_ttl_hours: int = 24
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_runtime_configuration(self) -> Settings:
+        """Reject unsafe production billing defaults unless explicitly overridden."""
+        if (
+            self.environment.lower() == "production"
+            and self.paddle_environment == "sandbox"
+            and not self.allow_paddle_sandbox_in_production
+        ):
+            raise ValueError(
+                "PADDLE_ENVIRONMENT=sandbox is not allowed when ENVIRONMENT=production "
+                "unless ALLOW_PADDLE_SANDBOX_IN_PRODUCTION=true."
+            )
+        return self
 
     @property
     def cv_upload_max_size_bytes(self) -> int:

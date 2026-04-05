@@ -11,6 +11,11 @@ from src.extensions.gemini import GeminiIntegrationError
 from src.extensions.s3 import S3StorageError
 from src.modules.auth.dependencies import AuthContext, require_admin
 from src.modules.extraction.presenters import build_extraction_workflow_run_response
+from src.modules.extraction.provider_health import (
+    CvExtractionProviderUnavailableError,
+    ensure_cv_extraction_provider_available,
+)
+from src.modules.extraction.repository import ExtractionWorkflowRunsRepository
 from src.modules.extraction.schemas import (
     CvExtractionWorkflowRunResponse,
     CvUploadResponse,
@@ -95,6 +100,7 @@ async def upload_cv_and_run_extraction(
 ) -> CvExtractionWorkflowRunResponse:
     """Accept a CV upload and queue the extraction workflow."""
     try:
+        await ensure_cv_extraction_provider_available(arq_redis=arq_redis)
         prepared_cv = await intake_cv_for_extraction(upload=file)
         # Admin auth may already have opened a DB transaction before the upload/storage work.
         # Reset the session so the workflow queueing step uses a fresh database connection.
@@ -116,7 +122,12 @@ async def upload_cv_and_run_extraction(
         ) from exc
     except InvalidCvFileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except (S3StorageError, GeminiIntegrationError, WorkflowEnqueueError) as exc:
+    except (
+        S3StorageError,
+        GeminiIntegrationError,
+        WorkflowEnqueueError,
+        CvExtractionProviderUnavailableError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
@@ -144,4 +155,9 @@ async def get_cv_extraction_run(
     if workflow_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found.")
 
-    return build_extraction_workflow_run_response(workflow_run=workflow_run)
+    repository = ExtractionWorkflowRunsRepository(session=session)
+    failure_event = await repository.get_latest_failure_event(workflow_run_id=workflow_run.id)
+    return build_extraction_workflow_run_response(
+        workflow_run=workflow_run,
+        failure_event=failure_event,
+    )

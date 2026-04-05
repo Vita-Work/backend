@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from src.modules.extraction.models import ExtractionWorkflowRun
+from src.modules.extraction.models import ExtractionProgressEvent, ExtractionWorkflowRun
+from src.modules.extraction.progress import get_extraction_error_code, get_extraction_retryable
 from src.modules.extraction.schemas import (
     CvExtractionWorkflowRunResponse,
     ExtractionInputResponse,
@@ -11,6 +12,7 @@ from src.modules.extraction.schemas import (
 def build_extraction_workflow_run_response(
     *,
     workflow_run: ExtractionWorkflowRun,
+    failure_event: ExtractionProgressEvent | None = None,
 ) -> CvExtractionWorkflowRunResponse:
     return CvExtractionWorkflowRunResponse(
         workflow_run_id=workflow_run.id,
@@ -34,6 +36,8 @@ def build_extraction_workflow_run_response(
         preference_hints=workflow_run.preference_hints or [],
         extraction_model=workflow_run.extraction_model,
         error_message=workflow_run.error_message,
+        error_code=get_extraction_error_code(progress_event=failure_event),
+        retryable=get_extraction_retryable(progress_event=failure_event),
         ui_phase=workflow_run.ui_phase,
         ui_label=workflow_run.ui_label,
         ui_description=workflow_run.ui_description,
