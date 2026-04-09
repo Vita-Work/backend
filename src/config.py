@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -79,6 +80,7 @@ class Settings(BaseSettings):
     auth_email_requests_per_hour: int = 5
     auth_session_touch_interval_seconds: int = 300
     app_base_url: str = "http://localhost:8080"
+    cors_allowed_origins: str = ""
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_reply_to: str | None = None
@@ -147,6 +149,33 @@ class Settings(BaseSettings):
     @property
     def auth_cookie_secure(self) -> bool:
         return self.environment not in {"local", "development"}
+
+    @property
+    def effective_cors_allowed_origins(self) -> list[str]:
+        origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+        ]
+
+        parsed_app_base_url = urlparse(self.app_base_url)
+        if parsed_app_base_url.scheme and parsed_app_base_url.netloc:
+            origins.append(f"{parsed_app_base_url.scheme}://{parsed_app_base_url.netloc}")
+
+        if self.cors_allowed_origins:
+            origins.extend(
+                origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()
+            )
+
+        deduped_origins: list[str] = []
+        for origin in origins:
+            if origin not in deduped_origins:
+                deduped_origins.append(origin)
+
+        return deduped_origins
 
 
 def get_settings() -> Settings:

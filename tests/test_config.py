@@ -16,3 +16,14 @@ def test_settings_allow_paddle_sandbox_in_production_with_explicit_override() ->
     )
 
     assert settings.paddle_environment == "sandbox"
+
+
+def test_settings_include_app_base_url_in_cors_origins() -> None:
+    settings = Settings(
+        app_base_url="https://app.vitable.cv/auth/login",
+        cors_allowed_origins="https://admin.vitable.cv, https://app.vitable.cv",
+    )
+
+    assert "https://app.vitable.cv" in settings.effective_cors_allowed_origins
+    assert "https://admin.vitable.cv" in settings.effective_cors_allowed_origins
+    assert settings.effective_cors_allowed_origins.count("https://app.vitable.cv") == 1
