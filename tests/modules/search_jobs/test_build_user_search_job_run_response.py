@@ -58,6 +58,10 @@ def test_build_user_search_job_run_response_limits_free_results_and_enriches_tra
         assert user_id == "user-1"
         return None
 
+    async def fake_get_access_pass(self, *, user_id: str):
+        assert user_id == "user-1"
+        return None
+
     async def fake_list_jobs_for_user(self, *, user_id: str, query):
         assert user_id == "user-1"
         assert query.archived is False
@@ -73,6 +77,11 @@ def test_build_user_search_job_run_response_limits_free_results_and_enriches_tra
         "src.modules.search_jobs.use_cases.build_user_search_job_run_response."
         "BillingSubscriptionsRepository.get_by_user_id",
         fake_get_subscription,
+    )
+    monkeypatch.setattr(
+        "src.modules.search_jobs.use_cases.build_user_search_job_run_response."
+        "BillingAccessPassesRepository.get_active_for_user",
+        fake_get_access_pass,
     )
     monkeypatch.setattr(
         "src.modules.search_jobs.use_cases.build_user_search_job_run_response."

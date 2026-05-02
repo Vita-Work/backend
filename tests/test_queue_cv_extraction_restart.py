@@ -34,6 +34,9 @@ class FakeOnboardingRepository:
     def __init__(self, *, session: FakeSession) -> None:
         self.session = session
 
+    async def list_active_for_user(self, *, user_id: str):
+        return [self.session.active_session]
+
     async def get_active_for_user(self, *, user_id: str):
         return self.session.active_session
 

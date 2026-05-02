@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     service_name: str = "vita-backend"
     log_level: str | None = None
     log_format: Literal["console", "json"] | None = None
+    cors_allowed_origins: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://localhost:8080,"
+        "http://127.0.0.1:8080,"
+        "http://localhost:8081,"
+        "http://127.0.0.1:8081"
+    )
+    allowed_hosts: str = "localhost,127.0.0.1,testserver"
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
@@ -41,7 +50,7 @@ class Settings(BaseSettings):
     s3_connect_timeout_seconds: int = 5
     s3_read_timeout_seconds: int = 30
     s3_max_pool_connections: int = 50
-    cv_upload_max_size_mb: int = 20
+    cv_upload_max_size_mb: int = 30
     clarification_max_rounds: int = 5
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
@@ -80,7 +89,6 @@ class Settings(BaseSettings):
     auth_email_requests_per_hour: int = 5
     auth_session_touch_interval_seconds: int = 300
     app_base_url: str = "http://localhost:8080"
-    cors_allowed_origins: str = ""
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_reply_to: str | None = None
@@ -151,24 +159,13 @@ class Settings(BaseSettings):
         return self.environment not in {"local", "development"}
 
     @property
-    def effective_cors_allowed_origins(self) -> list[str]:
+    def cors_allowed_origins_list(self) -> list[str]:
         origins = [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8081",
-            "http://127.0.0.1:8081",
+            origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()
         ]
-
         parsed_app_base_url = urlparse(self.app_base_url)
         if parsed_app_base_url.scheme and parsed_app_base_url.netloc:
             origins.append(f"{parsed_app_base_url.scheme}://{parsed_app_base_url.netloc}")
-
-        if self.cors_allowed_origins:
-            origins.extend(
-                origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()
-            )
 
         deduped_origins: list[str] = []
         for origin in origins:
@@ -177,7 +174,32 @@ class Settings(BaseSettings):
 
         return deduped_origins
 
+    @property
+    def effective_cors_allowed_origins(self) -> list[str]:
+        return self.cors_allowed_origins_list
+
+    @property
+    def cors_allowed_origin_regex(self) -> str | None:
+        if self.environment == "production":
+            return None
+        return r"https://.*\.trycloudflare\.com"
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def docs_enabled(self) -> bool:
+        return self.environment != "production"
+
 
 def get_settings() -> Settings:
     """Build and return application settings."""
-    return Settings()
+    settings = Settings()
+    if settings.environment == "production" and settings.auth_secret_key in {
+        "",
+        "change-me",
+        "dev-auth-secret-change-me",
+    }:
+        raise ValueError("AUTH_SECRET_KEY must be configured to a non-default value in production.")
+    return settings
